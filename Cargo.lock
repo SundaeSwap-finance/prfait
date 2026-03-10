@@ -1857,6 +1857,7 @@ dependencies = [
 [[package]]
 name = "inspect-core"
 version = "0.1.0"
+source = "git+https://github.com/Ataraxy-Labs/inspect?rev=a652462#a6524621de0e80eb31b854165b6518369c5208f9"
 dependencies = [
  "base64",
  "futures",

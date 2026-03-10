@@ -6,7 +6,7 @@ default-run = "prfait"
 repository = "https://github.com/SundaeSwap-finance/prfait"
 
 [dependencies]
-inspect-core = { path = "../../inspect/crates/inspect-core" }
+inspect-core = { git = "https://github.com/Ataraxy-Labs/inspect", rev = "a652462" }
 sem-core = { git = "https://github.com/Ataraxy-Labs/sem", rev = "71a6579" }
 
 ratatui = { version = "0.29", features = ["crossterm"] }
