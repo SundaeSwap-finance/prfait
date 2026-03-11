@@ -16,6 +16,7 @@ use sem_core::model::change::ChangeType;
 
 use crate::action::Action;
 use crate::components::Component;
+use crate::github::PrData;
 use crate::review::{DiffLineInfo, DiffSide, DragState, InlineEditor, LineMap, PendingComment, PrComment, ReviewThread};
 use crate::structural_diff::{self, Block as DiffBlock};
 use crate::components::pr_panel::{OverlapMap, compute_entity_overlaps, sort_entities_by_risk};
@@ -108,6 +109,10 @@ enum PanelContent {
         result: ReviewResult,
         /// entity_name → other PRs that also touch it
         entity_overlaps: HashMap<String, Vec<(String, u64)>>,
+        /// PR description body (may be empty)
+        pr_body: String,
+        /// GitHub URL for the PR
+        pr_html_url: String,
     },
     FileDiff {
         entities: Vec<EntityReview>,
@@ -238,7 +243,7 @@ impl DiffPanel {
         self.cursor_line = self.first_commentable();
     }
 
-    pub fn show_pr_summary(&mut self, repo: &str, pr_number: u64, result: &ReviewResult, overlaps: &OverlapMap) {
+    pub fn show_pr_summary(&mut self, repo: &str, pr_number: u64, result: &ReviewResult, overlaps: &OverlapMap, pr_data: Option<&PrData>) {
         self.current_file = None;
         self.current_context = Some((repo.to_string(), pr_number));
         self.scroll_y = 0;
@@ -252,6 +257,8 @@ impl DiffPanel {
             pr_number,
             result: result.clone(),
             entity_overlaps,
+            pr_body: pr_data.map(|d| d.body.clone()).unwrap_or_default(),
+            pr_html_url: pr_data.map(|d| d.html_url.clone()).unwrap_or_default(),
         };
         self.lines_dirty = true;
         self.rebuild_base_lines();
@@ -273,9 +280,11 @@ impl DiffPanel {
                 pr_number,
                 result,
                 entity_overlaps,
+                pr_body,
+                pr_html_url,
             } => {
                 let mut click_map = Vec::new();
-                let lines = render_pr_summary(result, repo, *pr_number, &mut click_map, entity_overlaps, &mut overlap_click_map);
+                let lines = render_pr_summary(result, repo, *pr_number, &mut click_map, entity_overlaps, &mut overlap_click_map, pr_body, pr_html_url);
                 self.summary_click_map = click_map;
                 lines
             }
@@ -2089,13 +2098,25 @@ fn expand_tabs_block(s: &str) -> String {
         .join("\n")
 }
 
-fn render_pr_summary(result: &ReviewResult, repo: &str, pr_number: u64, click_map: &mut Vec<(usize, String)>, entity_overlaps: &HashMap<String, Vec<(String, u64)>>, overlap_click_map: &mut Vec<(usize, OverlapClickTarget)>) -> Vec<Line<'static>> {
+fn render_pr_summary(result: &ReviewResult, repo: &str, pr_number: u64, click_map: &mut Vec<(usize, String)>, entity_overlaps: &HashMap<String, Vec<(String, u64)>>, overlap_click_map: &mut Vec<(usize, OverlapClickTarget)>, pr_body: &str, pr_html_url: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     lines.push(Line::from(Span::styled(
         format!(" {repo} #{pr_number} — Analysis Summary"),
         Style::default().fg(COL_HUNK),
     )));
+
+    // Show GitHub URL if available
+    if !pr_html_url.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(" GitHub: ", Style::default().fg(COL_CONTEXT)),
+            Span::styled(
+                pr_html_url.to_string(),
+                Style::default().fg(Color::Rgb(80, 180, 220)).add_modifier(Modifier::UNDERLINED),
+            ),
+        ]));
+    }
+
     lines.push(Line::from(""));
 
     let stats = &result.stats;
@@ -2195,6 +2216,18 @@ fn render_pr_summary(result: &ReviewResult, repo: &str, pr_number: u64, click_ma
         ),
         Style::default().fg(COL_CONTEXT),
     )));
+
+    // Show PR description at the end (after analysis) since it can be large
+    if !pr_body.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Description:",
+            Style::default().fg(Color::Rgb(220, 220, 220)),
+        )));
+        for desc_line in pr_body.lines() {
+            lines.push(Line::from(format!("   {desc_line}")));
+        }
+    }
 
     lines
 }
@@ -2480,4 +2513,298 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     }
 
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use inspect_core::types::{
+        ChangeTypeBreakdown, ClassificationBreakdown, ReviewResult, ReviewStats, RiskBreakdown,
+        Timing,
+    };
+
+    fn empty_review_result() -> ReviewResult {
+        ReviewResult {
+            entity_reviews: vec![],
+            groups: vec![],
+            stats: ReviewStats {
+                total_entities: 0,
+                by_risk: RiskBreakdown {
+                    critical: 0,
+                    high: 0,
+                    medium: 0,
+                    low: 0,
+                },
+                by_classification: ClassificationBreakdown {
+                    text: 0,
+                    syntax: 0,
+                    functional: 0,
+                    mixed: 0,
+                },
+                by_change_type: ChangeTypeBreakdown {
+                    added: 0,
+                    modified: 0,
+                    deleted: 0,
+                    moved: 0,
+                    renamed: 0,
+                },
+            },
+            timing: Timing::default(),
+            changes: vec![],
+        }
+    }
+
+    /// Flatten all spans in all lines to a single string for easy content assertions.
+    fn lines_to_text(lines: &[Line<'_>]) -> String {
+        lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn render_pr_summary_includes_github_url_when_non_empty() {
+        let result = empty_review_result();
+        let mut click_map = Vec::new();
+        let mut overlap_click_map = Vec::new();
+        let entity_overlaps = HashMap::new();
+        let url = "https://github.com/owner/repo/pull/42";
+
+        let lines = render_pr_summary(
+            &result,
+            "owner/repo",
+            42,
+            &mut click_map,
+            &entity_overlaps,
+            &mut overlap_click_map,
+            "",
+            url,
+        );
+
+        let text = lines_to_text(&lines);
+        assert!(
+            text.contains(url),
+            "Expected rendered output to contain the GitHub URL, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn render_pr_summary_omits_github_url_when_empty() {
+        let result = empty_review_result();
+        let mut click_map = Vec::new();
+        let mut overlap_click_map = Vec::new();
+        let entity_overlaps = HashMap::new();
+
+        let lines = render_pr_summary(
+            &result,
+            "owner/repo",
+            42,
+            &mut click_map,
+            &entity_overlaps,
+            &mut overlap_click_map,
+            "",
+            "",
+        );
+
+        let text = lines_to_text(&lines);
+        assert!(
+            !text.contains("GitHub:"),
+            "Expected no GitHub: label when url is empty, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn render_pr_summary_includes_description_when_non_empty() {
+        let result = empty_review_result();
+        let mut click_map = Vec::new();
+        let mut overlap_click_map = Vec::new();
+        let entity_overlaps = HashMap::new();
+        let body = "This PR fixes an important bug.";
+
+        let lines = render_pr_summary(
+            &result,
+            "owner/repo",
+            42,
+            &mut click_map,
+            &entity_overlaps,
+            &mut overlap_click_map,
+            body,
+            "",
+        );
+
+        let text = lines_to_text(&lines);
+        assert!(
+            text.contains("Description:"),
+            "Expected 'Description:' label in output, got:\n{text}"
+        );
+        assert!(
+            text.contains(body),
+            "Expected PR body text in output, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn render_pr_summary_omits_description_when_empty() {
+        let result = empty_review_result();
+        let mut click_map = Vec::new();
+        let mut overlap_click_map = Vec::new();
+        let entity_overlaps = HashMap::new();
+
+        let lines = render_pr_summary(
+            &result,
+            "owner/repo",
+            42,
+            &mut click_map,
+            &entity_overlaps,
+            &mut overlap_click_map,
+            "",
+            "",
+        );
+
+        let text = lines_to_text(&lines);
+        assert!(
+            !text.contains("Description:"),
+            "Expected no 'Description:' label when body is empty, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn render_pr_summary_includes_both_url_and_description() {
+        let result = empty_review_result();
+        let mut click_map = Vec::new();
+        let mut overlap_click_map = Vec::new();
+        let entity_overlaps = HashMap::new();
+        let body = "Adds feature X to the system.";
+        let url = "https://github.com/owner/repo/pull/7";
+
+        let lines = render_pr_summary(
+            &result,
+            "owner/repo",
+            7,
+            &mut click_map,
+            &entity_overlaps,
+            &mut overlap_click_map,
+            body,
+            url,
+        );
+
+        let text = lines_to_text(&lines);
+        assert!(text.contains(url), "Expected URL in output");
+        assert!(text.contains("Description:"), "Expected Description: label");
+        assert!(text.contains(body), "Expected body text in output");
+    }
+
+    #[test]
+    fn render_pr_summary_multiline_body_each_line_rendered() {
+        let result = empty_review_result();
+        let mut click_map = Vec::new();
+        let mut overlap_click_map = Vec::new();
+        let entity_overlaps = HashMap::new();
+        let body = "First line\nSecond line\nThird line";
+
+        let lines = render_pr_summary(
+            &result,
+            "owner/repo",
+            1,
+            &mut click_map,
+            &entity_overlaps,
+            &mut overlap_click_map,
+            body,
+            "",
+        );
+
+        let text = lines_to_text(&lines);
+        assert!(text.contains("First line"), "Expected first line of body");
+        assert!(text.contains("Second line"), "Expected second line of body");
+        assert!(text.contains("Third line"), "Expected third line of body");
+    }
+
+    #[test]
+    fn render_pr_summary_always_includes_title_header() {
+        let result = empty_review_result();
+        let mut click_map = Vec::new();
+        let mut overlap_click_map = Vec::new();
+        let entity_overlaps = HashMap::new();
+
+        let lines = render_pr_summary(
+            &result,
+            "my/repo",
+            99,
+            &mut click_map,
+            &entity_overlaps,
+            &mut overlap_click_map,
+            "",
+            "",
+        );
+
+        let text = lines_to_text(&lines);
+        assert!(
+            text.contains("my/repo #99"),
+            "Expected repo and PR number in header, got:\n{text}"
+        );
+        assert!(
+            text.contains("Analysis Summary"),
+            "Expected 'Analysis Summary' in header, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn show_pr_summary_stores_pr_body_and_url_from_pr_data() {
+        use crate::github::PrData;
+
+        let pr_data = PrData {
+            number: 5,
+            title: "Test".to_string(),
+            author: "dev".to_string(),
+            additions: 0,
+            deletions: 0,
+            changed_files: 0,
+            head_ref: "branch".to_string(),
+            base_ref: "main".to_string(),
+            head_sha: "sha".to_string(),
+            updated_at: "2025-01-15T08:30:00Z".to_string(),
+            files: vec![],
+            body: "PR body text".to_string(),
+            html_url: "https://github.com/owner/repo/pull/5".to_string(),
+        };
+
+        let result = empty_review_result();
+        let overlaps = HashMap::new();
+        let mut panel = DiffPanel::new();
+
+        panel.show_pr_summary("owner/repo", 5, &result, &overlaps, Some(&pr_data));
+
+        // After show_pr_summary, base_lines are built by rebuild_base_lines.
+        // We verify indirectly by checking lines_dirty is false and base_lines are populated.
+        assert!(!panel.lines_dirty, "lines should be built after show_pr_summary");
+        assert!(!panel.base_lines.is_empty(), "base_lines should have content");
+
+        let text = lines_to_text(&panel.base_lines);
+        assert!(text.contains("PR body text"), "Expected body in rendered lines");
+        assert!(
+            text.contains("https://github.com/owner/repo/pull/5"),
+            "Expected URL in rendered lines"
+        );
+    }
+
+    #[test]
+    fn show_pr_summary_with_no_pr_data_renders_no_url_or_description() {
+        let result = empty_review_result();
+        let overlaps = HashMap::new();
+        let mut panel = DiffPanel::new();
+
+        panel.show_pr_summary("owner/repo", 3, &result, &overlaps, None);
+
+        assert!(!panel.base_lines.is_empty(), "base_lines should have content");
+
+        let text = lines_to_text(&panel.base_lines);
+        assert!(!text.contains("GitHub:"), "No URL when pr_data is None");
+        assert!(!text.contains("Description:"), "No description when pr_data is None");
+    }
 }

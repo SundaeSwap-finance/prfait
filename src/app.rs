@@ -470,8 +470,9 @@ impl App {
 
                 if let Some(result) = result.or_else(|| self.pr_panel.get_analysis(repo, pr_number))
                 {
+                    let pr_data = self.pr_panel.get_pr(repo, pr_number);
                     self.diff_panel
-                        .show_pr_summary(repo, pr_number, &result, &self.pr_panel.overlap_map);
+                        .show_pr_summary(repo, pr_number, &result, &self.pr_panel.overlap_map, pr_data);
                 }
             }
             _ => {}
