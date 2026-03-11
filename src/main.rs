@@ -1,6 +1,7 @@
 mod action;
 mod analysis;
 mod app;
+mod checks;
 mod components;
 mod config;
 mod event;
@@ -228,6 +229,7 @@ fn generate_suggestion_comments(edited: &str, original: &str, app: &mut App) {
             start_line: if start < end { Some(start) } else { None },
             side: review::DiffSide::Right,
             body: suggestion_body,
+            reply_to_comment_id: None,
         };
         app.review.comments.push(comment);
     }

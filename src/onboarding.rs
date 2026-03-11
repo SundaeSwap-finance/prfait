@@ -176,6 +176,8 @@ pub fn run_onboarding() -> color_eyre::Result<Config> {
                 repos.push(RepoConfig {
                     name: name.clone(),
                     local_path: Some(path),
+                    checks: vec![],
+                    prefer_ci: true,
                 });
             } else {
                 unmatched.push(name.clone());
@@ -203,6 +205,8 @@ pub fn run_onboarding() -> color_eyre::Result<Config> {
                     } else {
                         Some(local_path.into())
                     },
+                    checks: vec![],
+                    prefer_ci: true,
                 });
             }
         }

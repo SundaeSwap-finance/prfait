@@ -20,9 +20,23 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckConfig {
+    pub name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoConfig {
     pub name: String,
     pub local_path: Option<PathBuf>,
+    #[serde(default)]
+    pub checks: Vec<CheckConfig>,
+    #[serde(default = "default_true")]
+    pub prefer_ci: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Config {

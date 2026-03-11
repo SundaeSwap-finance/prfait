@@ -70,6 +70,31 @@ impl Component for StatusBar {
             Action::ReviewError(msg) => {
                 self.message = Some((msg.clone(), MessageKind::Error));
             }
+            Action::IssueCommentPosted => {
+                self.message = Some(("Comment posted".to_string(), MessageKind::Info));
+            }
+            Action::IssueCommentError(msg) => {
+                self.message = Some((msg.clone(), MessageKind::Error));
+            }
+            Action::ChecksComplete(repo, pr, state) => {
+                let failed: Vec<&str> = state
+                    .checks
+                    .iter()
+                    .filter_map(|c| {
+                        if matches!(c.status, crate::checks::CheckStatus::Failed(_)) {
+                            Some(c.name.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !failed.is_empty() {
+                    self.message = Some((
+                        format!("{repo}#{pr}: {} failed", failed.join(", ")),
+                        MessageKind::Error,
+                    ));
+                }
+            }
             Action::Tick => {
                 self.tick = self.tick.wrapping_add(1);
             }
@@ -124,19 +149,19 @@ impl Component for StatusBar {
                 Span::raw(":refresh "),
                 Span::styled("?", Style::default().fg(Color::Cyan)),
                 Span::raw(":help "),
-                Span::styled("Esc/q", Style::default().fg(Color::Cyan)),
+                Span::styled("q", Style::default().fg(Color::Cyan)),
                 Span::raw(":quit"),
             ];
+            spans.push(Span::raw("  "));
             if self.review_count > 0 {
-                spans.push(Span::raw("  "));
                 spans.push(Span::styled(
                     format!("{} comment{}", self.review_count, if self.review_count == 1 { "" } else { "s" }),
                     Style::default().fg(Color::Yellow),
                 ));
                 spans.push(Span::raw(" | "));
-                spans.push(Span::styled("Ctrl+R", Style::default().fg(Color::Cyan)));
-                spans.push(Span::raw(":submit"));
             }
+            spans.push(Span::styled("Ctrl+R", Style::default().fg(Color::Cyan)));
+            spans.push(Span::raw(":review"));
             Line::from(spans)
         };
 

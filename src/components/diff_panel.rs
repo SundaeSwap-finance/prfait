@@ -15,6 +15,7 @@ use syntect::parsing::SyntaxSet;
 use sem_core::model::change::ChangeType;
 
 use crate::action::Action;
+use crate::checks::{CheckStatus, PrCheckState};
 use crate::components::Component;
 use crate::github::PrData;
 use crate::review::{DiffLineInfo, DiffSide, DragState, InlineEditor, LineMap, PendingComment, PrComment, ReviewThread};
@@ -113,6 +114,8 @@ enum PanelContent {
         pr_body: String,
         /// GitHub URL for the PR
         pr_html_url: String,
+        /// CI / local check results for this PR
+        check_state: Option<PrCheckState>,
     },
     FileDiff {
         entities: Vec<EntityReview>,
@@ -129,9 +132,9 @@ pub struct DiffPanel {
     current_file: Option<String>,
     current_context: Option<(String, u64)>,
     content: PanelContent,
-    lines: Vec<Line<'static>>,
+    pub lines: Vec<Line<'static>>,
     /// Vertical scroll
-    scroll_y: u16,
+    pub scroll_y: u16,
     /// Horizontal scroll
     scroll_x: u16,
     total_lines: u16,
@@ -243,7 +246,7 @@ impl DiffPanel {
         self.cursor_line = self.first_commentable();
     }
 
-    pub fn show_pr_summary(&mut self, repo: &str, pr_number: u64, result: &ReviewResult, overlaps: &OverlapMap, pr_data: Option<&PrData>) {
+    pub fn show_pr_summary(&mut self, repo: &str, pr_number: u64, result: &ReviewResult, overlaps: &OverlapMap, pr_data: Option<&PrData>, check_state: Option<&PrCheckState>) {
         self.current_file = None;
         self.current_context = Some((repo.to_string(), pr_number));
         self.scroll_y = 0;
@@ -259,6 +262,7 @@ impl DiffPanel {
             entity_overlaps,
             pr_body: pr_data.map(|d| d.body.clone()).unwrap_or_default(),
             pr_html_url: pr_data.map(|d| d.html_url.clone()).unwrap_or_default(),
+            check_state: check_state.cloned(),
         };
         self.lines_dirty = true;
         self.rebuild_base_lines();
@@ -282,9 +286,10 @@ impl DiffPanel {
                 entity_overlaps,
                 pr_body,
                 pr_html_url,
+                check_state,
             } => {
                 let mut click_map = Vec::new();
-                let lines = render_pr_summary(result, repo, *pr_number, &mut click_map, entity_overlaps, &mut overlap_click_map, pr_body, pr_html_url);
+                let lines = render_pr_summary(result, repo, *pr_number, &mut click_map, entity_overlaps, &mut overlap_click_map, pr_body, pr_html_url, check_state.as_ref());
                 self.summary_click_map = click_map;
                 lines
             }
@@ -410,7 +415,11 @@ impl DiffPanel {
         for comment in comments.iter().filter(|c| c.file_path == file_path) {
             if let Some(rendered_idx) = self.find_rendered_line(comment.line, comment.side) {
                 if rendered_idx < self.lines.len() {
-                    let marker = Span::styled("● ", Style::default().fg(Color::Yellow));
+                    let marker = if comment.reply_to_comment_id.is_some() {
+                        Span::styled("\u{21a9} ", Style::default().fg(Color::Yellow)) // ↩
+                    } else {
+                        Span::styled("\u{25cf} ", Style::default().fg(Color::Yellow)) // ●
+                    };
                     let mut spans = vec![marker];
                     spans.extend(self.lines[rendered_idx].spans.clone());
                     self.lines[rendered_idx] = Line::from(spans);
@@ -574,6 +583,53 @@ impl DiffPanel {
             .position(|entry| matches!(entry, Some(info) if info.commentable))
     }
 
+    /// Find the nearest commentable line at or after `from` within the viewport.
+    pub fn nearest_commentable_in_viewport(&self, from: usize) -> Option<usize> {
+        let viewport = self.last_inner_area.height as usize;
+        let end = (from + viewport).min(self.line_map.len());
+        // Search forward from `from`
+        self.line_map[from..end]
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| matches!(entry, Some(info) if info.commentable))
+            .map(|(i, _)| from + i)
+            .or_else(|| {
+                // Fallback: search backward from `from`
+                self.line_map[..from]
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, entry)| matches!(entry, Some(info) if info.commentable))
+                    .map(|(i, _)| i)
+            })
+    }
+
+    /// Collect the starting line index of each hunk (contiguous group of commentable lines).
+    fn hunk_starts(&self) -> Vec<usize> {
+        let mut starts = Vec::new();
+        let mut in_hunk = false;
+        for (i, entry) in self.line_map.iter().enumerate() {
+            let commentable = entry.as_ref().is_some_and(|info| info.commentable);
+            if commentable && !in_hunk {
+                starts.push(i);
+                in_hunk = true;
+            } else if !commentable {
+                in_hunk = false;
+            }
+        }
+        starts
+    }
+
+    /// Find the next hunk start after the given line.
+    fn next_hunk_line(&self, after: usize) -> Option<usize> {
+        self.hunk_starts().into_iter().find(|&start| start > after)
+    }
+
+    /// Find the previous hunk start before the given line.
+    fn prev_hunk_line(&self, before: usize) -> Option<usize> {
+        self.hunk_starts().into_iter().rev().find(|&start| start < before)
+    }
+
     /// Adjust scroll so cursor_line is within the visible viewport.
     fn ensure_cursor_visible(&mut self) {
         if let Some(cursor) = self.cursor_line {
@@ -598,12 +654,6 @@ impl Component for DiffPanel {
             KeyCode::Char('k') | KeyCode::Up => Action::ScrollUp(1),
             KeyCode::Char('h') | KeyCode::Left => Action::ScrollLeft(4),
             KeyCode::Char('l') | KeyCode::Right => Action::ScrollRight(4),
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                Action::ScrollDown(20)
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                Action::ScrollUp(20)
-            }
             KeyCode::Char('g') => Action::ScrollToTop,
             KeyCode::Char('G') => Action::ScrollToBottom,
             KeyCode::Char('0') | KeyCode::Home => Action::ScrollLeft(u16::MAX),
@@ -640,6 +690,31 @@ impl Component for DiffPanel {
             }
             Action::ScrollUp(n) => {
                 self.scroll_y = self.scroll_y.saturating_sub(*n);
+            }
+            Action::ScrollHalfPageDown => {
+                let half = (self.last_inner_area.height / 2).max(1);
+                self.scroll_y = self
+                    .scroll_y
+                    .saturating_add(half)
+                    .min(self.total_lines.saturating_sub(1));
+                self.cursor_line = self.nearest_commentable_in_viewport(self.scroll_y as usize);
+            }
+            Action::ScrollHalfPageUp => {
+                let half = (self.last_inner_area.height / 2).max(1);
+                self.scroll_y = self.scroll_y.saturating_sub(half);
+                self.cursor_line = self.nearest_commentable_in_viewport(self.scroll_y as usize);
+            }
+            Action::JumpNextHunk => {
+                if let Some(target) = self.next_hunk_line(self.scroll_y as usize) {
+                    self.scroll_y = target as u16;
+                    self.cursor_line = self.nearest_commentable_in_viewport(target);
+                }
+            }
+            Action::JumpPrevHunk => {
+                if let Some(target) = self.prev_hunk_line(self.scroll_y as usize) {
+                    self.scroll_y = target as u16;
+                    self.cursor_line = self.nearest_commentable_in_viewport(target);
+                }
             }
             Action::ScrollLeft(n) => {
                 self.scroll_x = self.scroll_x.saturating_sub(*n);
@@ -724,6 +799,12 @@ impl Component for DiffPanel {
 
         let inner = block.inner(area);
         self.last_inner_area = inner;
+
+        // Clamp scroll to valid range
+        let max_scroll = (self.lines.len() as u16).saturating_sub(1);
+        if self.scroll_y > max_scroll {
+            self.scroll_y = max_scroll;
+        }
 
         // Only clone the visible slice of lines (viewport clipping)
         let start = self.scroll_y as usize;
@@ -2098,7 +2179,7 @@ fn expand_tabs_block(s: &str) -> String {
         .join("\n")
 }
 
-fn render_pr_summary(result: &ReviewResult, repo: &str, pr_number: u64, click_map: &mut Vec<(usize, String)>, entity_overlaps: &HashMap<String, Vec<(String, u64)>>, overlap_click_map: &mut Vec<(usize, OverlapClickTarget)>, pr_body: &str, pr_html_url: &str) -> Vec<Line<'static>> {
+fn render_pr_summary(result: &ReviewResult, repo: &str, pr_number: u64, click_map: &mut Vec<(usize, String)>, entity_overlaps: &HashMap<String, Vec<(String, u64)>>, overlap_click_map: &mut Vec<(usize, OverlapClickTarget)>, pr_body: &str, pr_html_url: &str, check_state: Option<&PrCheckState>) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     lines.push(Line::from(Span::styled(
@@ -2216,6 +2297,47 @@ fn render_pr_summary(result: &ReviewResult, repo: &str, pr_number: u64, click_ma
         ),
         Style::default().fg(COL_CONTEXT),
     )));
+
+    // Checks section
+    if let Some(state) = check_state {
+        if !state.checks.is_empty() {
+            lines.push(Line::from(""));
+            let source_label = match state.source {
+                crate::checks::CheckSource::GithubActions => "Checks (GitHub Actions):",
+                crate::checks::CheckSource::Local => "Checks (local):",
+            };
+            lines.push(Line::from(Span::styled(
+                format!(" {source_label}"),
+                Style::default().fg(Color::Rgb(220, 220, 220)),
+            )));
+            for check in &state.checks {
+                let (icon, color) = match &check.status {
+                    CheckStatus::Passed => ("\u{2713}", Color::Green),
+                    CheckStatus::Failed(_) => ("\u{2717}", Color::Rgb(220, 50, 50)),
+                    CheckStatus::Running | CheckStatus::Pending => ("\u{23f3}", Color::Yellow),
+                };
+                let mut spans = vec![
+                    Span::styled(format!("  {icon} "), Style::default().fg(color)),
+                    Span::raw(check.name.clone()),
+                ];
+                if let CheckStatus::Failed(ref msg) = check.status {
+                    if !msg.is_empty() {
+                        spans.push(Span::styled(
+                            format!(" — {msg}"),
+                            Style::default().fg(Color::Rgb(180, 80, 80)),
+                        ));
+                    }
+                }
+                if let Some(ref url) = check.url {
+                    spans.push(Span::styled(
+                        format!("  {url}"),
+                        Style::default().fg(Color::Rgb(100, 140, 220)),
+                    ));
+                }
+                lines.push(Line::from(spans));
+            }
+        }
+    }
 
     // Show PR description at the end (after analysis) since it can be large
     if !pr_body.is_empty() {

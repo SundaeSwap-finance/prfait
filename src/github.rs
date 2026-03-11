@@ -143,6 +143,7 @@ struct GqlThreadCommentConnection {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GqlThreadComment {
+    database_id: Option<u64>,
     author: Option<GqlAuthor>,
     body: String,
     created_at: String,
@@ -316,6 +317,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
           diffSide
           comments(first: 50) {
             nodes {
+              databaseId
               author { login }
               body
               createdAt
@@ -388,6 +390,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
                         .nodes
                         .into_iter()
                         .map(|c| ThreadComment {
+                            id: c.database_id.unwrap_or(0),
                             author: c.author.map(|a| a.login).unwrap_or_default(),
                             body: c.body,
                             created_at: c.created_at,
@@ -409,6 +412,78 @@ query($owner: String!, $repo: String!, $number: Int!) {
             .collect();
 
         Ok(PrComments { threads, comments })
+    }
+
+    /// Reply to an existing review comment thread.
+    pub async fn reply_to_comment(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        comment_id: u64,
+        body: &str,
+    ) -> color_eyre::Result<()> {
+        let resp = self
+            .http
+            .post(format!(
+                "https://api.github.com/repos/{repo}/pulls/{pr_number}/comments/{comment_id}/replies"
+            ))
+            .json(&serde_json::json!({ "body": body }))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            color_eyre::eyre::bail!("GitHub API {status}: {text}");
+        }
+        Ok(())
+    }
+
+    /// Post a top-level issue comment on a PR.
+    pub async fn post_issue_comment(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        body: &str,
+    ) -> color_eyre::Result<()> {
+        let resp = self
+            .http
+            .post(format!(
+                "https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
+            ))
+            .json(&serde_json::json!({ "body": body }))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            color_eyre::eyre::bail!("GitHub API {status}: {text}");
+        }
+        Ok(())
+    }
+
+    /// Fetch check runs for a commit SHA (REST API).
+    pub async fn fetch_check_runs(
+        &self,
+        repo: &str,
+        sha: &str,
+    ) -> color_eyre::Result<serde_json::Value> {
+        let resp = self
+            .http
+            .get(format!(
+                "https://api.github.com/repos/{repo}/commits/{sha}/check-runs"
+            ))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            color_eyre::eyre::bail!("GitHub API {status}: {text}");
+        }
+
+        Ok(resp.json().await?)
     }
 
     /// Fetch raw diff for a PR (for semantic analysis of remote-only repos)

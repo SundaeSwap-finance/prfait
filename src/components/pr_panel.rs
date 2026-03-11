@@ -7,6 +7,7 @@ use ratatui::Frame;
 use tui_tree_widget::{Tree, TreeItem, TreeState};
 
 use crate::action::Action;
+use crate::checks::{CheckStatus, PrCheckState};
 use crate::components::Component;
 use crate::github::PrData;
 use inspect_core::types::{EntityReview, ReviewResult};
@@ -49,8 +50,12 @@ pub struct PrPanel {
     file_comment_counts: HashMap<(String, u64, String), usize>,
     /// Files the user has marked as reviewed: (repo, pr_number, file_path)
     reviewed_files: HashSet<(String, u64, String)>,
+    /// Tracks the head SHA per (repo, pr_number) for invalidating reviewed-file cache
+    head_shas: HashMap<(String, u64), String>,
     /// Cross-PR entity overlap map, rebuilt whenever an analysis arrives
     pub overlap_map: OverlapMap,
+    /// CI / local check state per (repo, pr_number)
+    check_states: HashMap<(String, u64), PrCheckState>,
 }
 
 impl PrPanel {
@@ -63,7 +68,9 @@ impl PrPanel {
             loading_repos: Vec::new(),
             file_comment_counts: HashMap::new(),
             reviewed_files: HashSet::new(),
+            head_shas: HashMap::new(),
             overlap_map: HashMap::new(),
+            check_states: HashMap::new(),
         }
     }
 
@@ -108,6 +115,10 @@ impl PrPanel {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    pub fn get_check_state(&self, repo: &str, pr_number: u64) -> Option<&PrCheckState> {
+        self.check_states.get(&(repo.to_string(), pr_number))
     }
 
     pub fn is_loading(&self) -> bool {
@@ -187,16 +198,35 @@ impl PrPanel {
             .map(|(_, path)| path.to_string())
     }
 
-    pub fn load_reviewed(&mut self, repo: &str, pr_number: u64) {
+    pub fn load_reviewed(&mut self, repo: &str, pr_number: u64, head_sha: &str) {
         // Clear any existing reviewed state for this PR
         self.reviewed_files.retain(|&(ref r, pr, _)| !(r == repo && pr == pr_number));
+        self.head_shas.insert((repo.to_string(), pr_number), head_sha.to_string());
+
         let dir = reviewed_cache_dir();
         let filename = format!("{}__{}.json", repo.replace('/', "__"), pr_number);
         let path = dir.join(filename);
         if let Ok(data) = std::fs::read_to_string(&path) {
-            if let Ok(files) = serde_json::from_str::<Vec<String>>(&data) {
-                for f in files {
-                    self.reviewed_files.insert((repo.to_string(), pr_number, f));
+            // Try new format: {"sha": "...", "files": [...]}
+            if let Ok(cached) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(obj) = cached.as_object() {
+                    if let (Some(sha), Some(files)) = (obj.get("sha").and_then(|s| s.as_str()), obj.get("files").and_then(|f| f.as_array())) {
+                        if sha != head_sha {
+                            // SHA mismatch — invalidate cache
+                            let _ = std::fs::remove_file(&path);
+                            return;
+                        }
+                        for f in files {
+                            if let Some(s) = f.as_str() {
+                                self.reviewed_files.insert((repo.to_string(), pr_number, s.to_string()));
+                            }
+                        }
+                        return;
+                    }
+                }
+                // Fallback: old format was a bare array — discard it (SHA unknown)
+                if cached.is_array() {
+                    let _ = std::fs::remove_file(&path);
                 }
             }
         }
@@ -213,8 +243,14 @@ impl PrPanel {
             .collect();
         if files.is_empty() {
             let _ = std::fs::remove_file(path);
-        } else if let Ok(json) = serde_json::to_string(&files) {
-            let _ = std::fs::write(path, json);
+        } else {
+            let sha = self.head_shas.get(&(repo.to_string(), pr_number))
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            let obj = serde_json::json!({ "sha": sha, "files": files });
+            if let Ok(json) = serde_json::to_string(&obj) {
+                let _ = std::fs::write(path, json);
+            }
         }
     }
 
@@ -321,11 +357,16 @@ impl PrPanel {
                         let stale_suffix = " STALE";
                         let stale_len = if stale { stale_suffix.len() } else { 0 };
 
+                        // Single worst-status icon for checks
+                        let check_key = (repo_name.clone(), pr.number);
+                        let check_icon = worst_check_icon(self.check_states.get(&check_key));
+                        let check_len = if check_icon.is_some() { 2 } else { 0 }; // " ✓"
+
                         let pr_label = if let Some(a) = analysis {
                             let (badge, badge_color) = risk_badge_styled(&a.stats);
                             let rest = truncate(
                                 &format!("#{} {}", pr.number, &pr.title),
-                                w1.saturating_sub(badge.len() + 1 + suffix_len + stale_len),
+                                w1.saturating_sub(badge.len() + 1 + suffix_len + stale_len + check_len),
                             );
                             let mut spans = vec![
                                 Span::styled(badge, Style::default().fg(badge_color)),
@@ -334,6 +375,9 @@ impl PrPanel {
                             ];
                             if stale {
                                 spans.push(Span::styled(stale_suffix, Style::default().fg(Color::Magenta)));
+                            }
+                            if let Some((icon, color)) = check_icon {
+                                spans.push(Span::styled(format!(" {icon}"), Style::default().fg(color)));
                             }
                             if comment_count > 0 {
                                 spans.push(Span::styled(
@@ -345,10 +389,13 @@ impl PrPanel {
                         } else {
                             let mut spans = vec![Span::raw(truncate(
                                 &format!("#{} {}", pr.number, &pr.title),
-                                w1.saturating_sub(suffix_len + stale_len),
+                                w1.saturating_sub(suffix_len + stale_len + check_len),
                             ))];
                             if stale {
                                 spans.push(Span::styled(stale_suffix, Style::default().fg(Color::Magenta)));
+                            }
+                            if let Some((icon, color)) = check_icon {
+                                spans.push(Span::styled(format!(" {icon}"), Style::default().fg(color)));
                             }
                             if comment_count > 0 {
                                 spans.push(Span::styled(
@@ -445,6 +492,27 @@ impl Component for PrPanel {
                 self.set_analysis(repo.clone(), *pr_number, *result.clone());
                 Action::Noop
             }
+            Action::ChecksStarted(repo, pr, sha) => {
+                self.check_states.insert(
+                    (repo.clone(), *pr),
+                    PrCheckState {
+                        sha: sha.clone(),
+                        source: crate::checks::CheckSource::Local,
+                        checks: vec![],
+                    },
+                );
+                Action::Noop
+            }
+            Action::ChecksUpdate(repo, pr, results) => {
+                if let Some(state) = self.check_states.get_mut(&(repo.clone(), *pr)) {
+                    state.checks = results.clone();
+                }
+                Action::Noop
+            }
+            Action::ChecksComplete(repo, pr, state) => {
+                self.check_states.insert((repo.clone(), *pr), state.clone());
+                Action::Noop
+            }
             _ => Action::Noop,
         }
     }
@@ -501,6 +569,27 @@ fn risk_badge_styled(stats: &ReviewStats) -> (String, Color) {
         ("[~]".to_string(), Color::Blue)
     } else {
         ("[ok]".to_string(), Color::Green)
+    }
+}
+
+/// Return a single icon + color representing the worst check status.
+/// Red ✗ if any failed, yellow ⏳ if any running/pending, green ✓ if all passed.
+/// Returns None if there are no checks.
+fn worst_check_icon(state: Option<&PrCheckState>) -> Option<(&'static str, Color)> {
+    let state = match state {
+        Some(s) if !s.checks.is_empty() => s,
+        _ => return None,
+    };
+
+    let has_failed = state.checks.iter().any(|c| matches!(c.status, CheckStatus::Failed(_)));
+    let has_running = state.checks.iter().any(|c| matches!(c.status, CheckStatus::Running | CheckStatus::Pending));
+
+    if has_failed {
+        Some(("\u{2717}", Color::Red))       // ✗
+    } else if has_running {
+        Some(("\u{23f3}", Color::Yellow))    // ⏳
+    } else {
+        Some(("\u{2713}", Color::Green))     // ✓
     }
 }
 

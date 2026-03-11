@@ -25,6 +25,9 @@ pub struct PendingComment {
     pub start_line: Option<usize>,    // For range comments (start of range)
     pub side: DiffSide,
     pub body: String,
+    /// If set, this is a reply to an existing thread (database ID of the top comment)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_comment_id: Option<u64>,
 }
 
 /// State machine for mouse drag interactions.
@@ -55,6 +58,8 @@ pub struct InlineEditor {
     pub target_start_line: Option<usize>,
     pub target_side: DiffSide,
     pub editing_index: Option<usize>,    // If editing an existing comment
+    /// If set, this editor is composing a reply to an existing thread
+    pub reply_to_comment_id: Option<u64>,
 }
 
 impl InlineEditor {
@@ -74,6 +79,7 @@ impl InlineEditor {
             target_start_line,
             target_side,
             editing_index: None,
+            reply_to_comment_id: None,
         }
     }
 
@@ -95,6 +101,7 @@ impl InlineEditor {
             target_start_line: comment.start_line,
             target_side: comment.side,
             editing_index: Some(index),
+            reply_to_comment_id: comment.reply_to_comment_id,
         }
     }
 
@@ -180,6 +187,114 @@ impl InlineEditor {
     }
 }
 
+/// What a body editor is being used for.
+#[derive(Debug, Clone)]
+pub enum BodyEditorPurpose {
+    /// Collecting review body for a submit (RequestChanges or Comment with no inline comments)
+    ReviewBody(ReviewEvent),
+    /// Composing a top-level PR issue comment
+    IssueComment,
+}
+
+/// Popup text editor for composing review bodies or top-level PR comments.
+#[derive(Debug, Clone)]
+pub struct BodyEditor {
+    pub lines: Vec<String>,
+    pub cursor: (usize, usize), // (line, col)
+    pub purpose: BodyEditorPurpose,
+}
+
+impl BodyEditor {
+    pub fn new(purpose: BodyEditorPurpose) -> Self {
+        Self {
+            lines: vec![String::new()],
+            cursor: (0, 0),
+            purpose,
+        }
+    }
+
+    pub fn body(&self) -> String {
+        self.lines.join("\n")
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        let (line, col) = self.cursor;
+        self.lines[line].insert(col, c);
+        self.cursor.1 += 1;
+    }
+
+    pub fn insert_newline(&mut self) {
+        let (line, col) = self.cursor;
+        let rest = self.lines[line][col..].to_string();
+        self.lines[line].truncate(col);
+        self.lines.insert(line + 1, rest);
+        self.cursor = (line + 1, 0);
+    }
+
+    pub fn backspace(&mut self) {
+        let (line, col) = self.cursor;
+        if col > 0 {
+            self.lines[line].remove(col - 1);
+            self.cursor.1 -= 1;
+        } else if line > 0 {
+            let removed = self.lines.remove(line);
+            let prev_len = self.lines[line - 1].len();
+            self.lines[line - 1].push_str(&removed);
+            self.cursor = (line - 1, prev_len);
+        }
+    }
+
+    pub fn delete(&mut self) {
+        let (line, col) = self.cursor;
+        if col < self.lines[line].len() {
+            self.lines[line].remove(col);
+        } else if line + 1 < self.lines.len() {
+            let next = self.lines.remove(line + 1);
+            self.lines[line].push_str(&next);
+        }
+    }
+
+    pub fn move_left(&mut self) {
+        if self.cursor.1 > 0 {
+            self.cursor.1 -= 1;
+        } else if self.cursor.0 > 0 {
+            self.cursor.0 -= 1;
+            self.cursor.1 = self.lines[self.cursor.0].len();
+        }
+    }
+
+    pub fn move_right(&mut self) {
+        let (line, col) = self.cursor;
+        if col < self.lines[line].len() {
+            self.cursor.1 += 1;
+        } else if line + 1 < self.lines.len() {
+            self.cursor = (line + 1, 0);
+        }
+    }
+
+    pub fn move_up(&mut self) {
+        if self.cursor.0 > 0 {
+            self.cursor.0 -= 1;
+            self.cursor.1 = self.cursor.1.min(self.lines[self.cursor.0].len());
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.cursor.0 + 1 < self.lines.len() {
+            self.cursor.0 += 1;
+            self.cursor.1 = self.cursor.1.min(self.lines[self.cursor.0].len());
+        }
+    }
+
+    pub fn move_home(&mut self) {
+        self.cursor.1 = 0;
+    }
+
+    pub fn move_end(&mut self) {
+        self.cursor.1 = self.lines[self.cursor.0].len();
+    }
+}
+
 /// An existing review thread from GitHub (inline comment thread on a file).
 #[derive(Debug, Clone)]
 pub struct ReviewThread {
@@ -191,9 +306,17 @@ pub struct ReviewThread {
     pub comments: Vec<ThreadComment>,
 }
 
+impl ReviewThread {
+    /// Database ID of the thread's first (top-level) comment, used for replies.
+    pub fn first_comment_id(&self) -> Option<u64> {
+        self.comments.first().and_then(|c| if c.id > 0 { Some(c.id) } else { None })
+    }
+}
+
 /// A single comment within a review thread.
 #[derive(Debug, Clone)]
 pub struct ThreadComment {
+    pub id: u64,
     pub author: String,
     pub body: String,
     pub created_at: String,
@@ -237,6 +360,7 @@ pub struct ReviewState {
     pub comments: Vec<PendingComment>,
     pub drag: DragState,
     pub inline_editor: Option<InlineEditor>,
+    pub body_editor: Option<BodyEditor>,
     pub submit_mode: bool,
     // PR context for submitting reviews
     pub repo: Option<String>,
@@ -250,6 +374,7 @@ impl ReviewState {
             comments: Vec::new(),
             drag: DragState::Idle,
             inline_editor: None,
+            body_editor: None,
             submit_mode: false,
             repo: None,
             pr_number: None,

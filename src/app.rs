@@ -11,13 +11,14 @@ use tokio::sync::{mpsc, Mutex};
 
 use crate::action::Action;
 use crate::analysis::AnalysisManager;
+use crate::checks::CheckManager;
 use crate::components::diff_panel::{DiffPanel, FileContext};
 use crate::components::pr_panel::{NodeId, PrPanel};
 use crate::components::status_bar::StatusBar;
 use crate::components::Component;
 use crate::config::Config;
 use crate::github::{GithubClient, PrData};
-use crate::review::{DragState, InlineEditor, PendingComment, ReviewEvent, ReviewState};
+use crate::review::{BodyEditor, BodyEditorPurpose, DragState, InlineEditor, PendingComment, ReviewEvent, ReviewState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -35,6 +36,7 @@ pub struct App {
     pub action_tx: mpsc::UnboundedSender<Action>,
     pub github_client: Arc<GithubClient>,
     pub analysis: AnalysisManager,
+    pub checks: CheckManager,
     pub review: ReviewState,
     pr_cache: HashMap<String, Vec<PrData>>,
     comments_cache: HashMap<(String, u64), crate::review::PrComments>,
@@ -42,6 +44,16 @@ pub struct App {
     file_content_cache: Arc<Mutex<HashMap<(String, u64, String), (String, String)>>>,
     show_sidebar: bool,
     show_help: bool,
+    /// Search state
+    search_input: Option<String>,
+    search_query: Option<String>,
+    search_matches: Vec<usize>,
+    search_match_idx: Option<usize>,
+    /// Saved scroll/cursor before search, restored on Esc
+    search_saved_scroll: u16,
+    search_saved_cursor: Option<usize>,
+    /// Esc-to-quit confirmation: true if Esc was pressed once recently
+    esc_pending: bool,
     /// Layout areas from last render (for mouse hit-testing)
     left_area: Rect,
     right_area: Rect,
@@ -64,18 +76,36 @@ impl App {
             action_tx,
             github_client,
             analysis,
+            checks: CheckManager::new(),
             review: ReviewState::new(),
             pr_cache: HashMap::new(),
             comments_cache: HashMap::new(),
             file_content_cache: Arc::new(Mutex::new(HashMap::new())),
             show_sidebar: true,
             show_help: false,
+            search_input: None,
+            search_query: None,
+            search_matches: Vec::new(),
+            search_match_idx: None,
+            search_saved_scroll: 0,
+            search_saved_cursor: None,
+            esc_pending: false,
             left_area: Rect::default(),
             right_area: Rect::default(),
         }
     }
 
     pub fn handle_key_event(&mut self, key: KeyEvent) -> Action {
+        // When search input is active, route keys there
+        if self.search_input.is_some() {
+            return self.handle_search_key(key);
+        }
+
+        // When body editor is active, route keys there
+        if self.review.body_editor.is_some() {
+            return self.handle_body_editor_key(key);
+        }
+
         // When inline editor is active, route keys there
         if self.review.inline_editor.is_some() {
             return self.handle_editor_key(key);
@@ -92,8 +122,36 @@ impl App {
             return Action::Noop;
         }
 
+        // Any non-Esc key clears the esc-pending state
+        if key.code != KeyCode::Esc {
+            self.esc_pending = false;
+        }
+
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => return Action::Quit,
+            KeyCode::Char('q') => return Action::Quit,
+            KeyCode::Esc => {
+                // Clear search if active
+                if self.search_query.is_some() {
+                    self.search_query = None;
+                    self.search_matches.clear();
+                    self.search_match_idx = None;
+                    return Action::Noop;
+                }
+                // Go back: DiffView → PrList (show sidebar)
+                if self.focus == Focus::DiffView {
+                    self.show_sidebar = true;
+                    self.focus = Focus::PrList;
+                    self.pr_panel.focused = true;
+                    self.diff_panel.focused = false;
+                    return Action::Noop;
+                }
+                // PrList: double-tap Esc to quit
+                if self.esc_pending {
+                    return Action::Quit;
+                }
+                self.esc_pending = true;
+                return Action::Noop;
+            }
             KeyCode::Tab => {
                 if self.focus == Focus::PrList {
                     // Leaving PrList: hide sidebar, focus diff
@@ -114,7 +172,9 @@ impl App {
                 self.show_help = true;
                 return Action::Noop;
             }
-            KeyCode::Char('d') => return Action::ToggleDiffMode,
+            KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Action::ToggleDiffMode
+            }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 return Action::Quit
             }
@@ -127,6 +187,14 @@ impl App {
                 KeyCode::Char('k') | KeyCode::Up => Action::TreeUp,
                 KeyCode::Char('h') | KeyCode::Left => Action::TreeLeft,
                 KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => Action::TreeRight,
+                KeyCode::Char('c') => {
+                    if matches!(self.pr_panel.selected_node(), Some(NodeId::Pr(..))) {
+                        self.review.body_editor = Some(BodyEditor::new(
+                            BodyEditorPurpose::IssueComment,
+                        ));
+                    }
+                    Action::Noop
+                }
                 KeyCode::Char('x') => {
                     if let Some(NodeId::File(repo, pr, path)) = self.pr_panel.selected_node().cloned() {
                         Action::MarkFileReviewed(repo, pr, path)
@@ -135,19 +203,19 @@ impl App {
                     }
                 }
                 KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if !self.review.comments.is_empty() {
-                        Action::OpenReviewSubmit
-                    } else {
-                        Action::Noop
-                    }
+                    Action::OpenReviewSubmit
                 }
                 KeyCode::Char('r') => Action::RefreshPrs,
                 _ => Action::Noop,
             },
             Focus::DiffView => match key.code {
+                KeyCode::Char('J') => Action::ScrollHalfPageDown,
+                KeyCode::Char('K') => Action::ScrollHalfPageUp,
                 KeyCode::Char('j') | KeyCode::Down => Action::CursorDown,
                 KeyCode::Char('k') | KeyCode::Up => Action::CursorUp,
                 KeyCode::Enter | KeyCode::Char('c') => Action::CursorComment,
+                KeyCode::Char('{') => Action::JumpPrevHunk,
+                KeyCode::Char('}') => Action::JumpNextHunk,
                 KeyCode::Char('x') => {
                     if let Some((repo, pr_number)) = self.diff_panel.current_context().cloned() {
                         if let Some(file) = self.diff_panel.current_file().map(|f| f.to_string()) {
@@ -161,26 +229,95 @@ impl App {
                 }
                 KeyCode::Char('h') | KeyCode::Left => Action::ScrollLeft(4),
                 KeyCode::Char('l') | KeyCode::Right => Action::ScrollRight(4),
-                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    Action::ScrollDown(20)
-                }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    Action::ScrollUp(20)
-                }
+                KeyCode::PageDown => Action::ScrollHalfPageDown,
+                KeyCode::PageUp => Action::ScrollHalfPageUp,
                 KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if !self.review.comments.is_empty() {
-                        Action::OpenReviewSubmit
-                    } else {
-                        Action::Noop
-                    }
+                    Action::OpenReviewSubmit
                 }
                 KeyCode::Char('e') => Action::OpenInEditor,
                 KeyCode::Char('g') => Action::ScrollToTop,
                 KeyCode::Char('G') => Action::ScrollToBottom,
                 KeyCode::Char('0') | KeyCode::Home => Action::ScrollLeft(u16::MAX),
                 KeyCode::Char('$') | KeyCode::End => Action::ScrollRight(u16::MAX),
+                KeyCode::Char('/') => {
+                    self.search_saved_scroll = self.diff_panel.scroll_y;
+                    self.search_saved_cursor = self.diff_panel.cursor_line;
+                    self.search_input = Some(String::new());
+                    Action::Noop
+                }
+                KeyCode::Char('n') => Action::SearchNext,
+                KeyCode::Char('N') => Action::SearchPrev,
                 _ => Action::Noop,
             },
+        }
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) -> Action {
+        match key.code {
+            KeyCode::Esc => {
+                // Abort search, restore position
+                self.search_input = None;
+                self.search_query = None;
+                self.search_matches.clear();
+                self.search_match_idx = None;
+                self.diff_panel.scroll_y = self.search_saved_scroll;
+                self.diff_panel.cursor_line = self.search_saved_cursor;
+                Action::Noop
+            }
+            KeyCode::Enter => {
+                // Commit search, stay at current position
+                let query = self.search_input.take().unwrap_or_default();
+                if query.is_empty() {
+                    self.search_query = None;
+                    self.search_matches.clear();
+                    self.search_match_idx = None;
+                } else {
+                    self.search_query = Some(query);
+                    self.rebuild_search_matches();
+                    if !self.search_matches.is_empty() {
+                        let scroll = self.diff_panel.scroll_y as usize;
+                        let idx = self.search_matches.iter()
+                            .position(|&line| line >= scroll)
+                            .unwrap_or(0);
+                        self.search_match_idx = Some(idx);
+                        self.jump_to_search_match(self.search_matches[idx]);
+                    }
+                }
+                Action::Noop
+            }
+            KeyCode::Backspace => {
+                if let Some(ref mut input) = self.search_input {
+                    input.pop();
+                }
+                Action::Noop
+            }
+            KeyCode::Char(c) => {
+                if let Some(ref mut input) = self.search_input {
+                    input.push(c);
+                }
+                Action::Noop
+            }
+            _ => Action::Noop,
+        }
+    }
+
+    fn jump_to_search_match(&mut self, line: usize) {
+        self.diff_panel.scroll_y = line as u16;
+        self.diff_panel.cursor_line = self.diff_panel.nearest_commentable_in_viewport(line);
+    }
+
+    fn rebuild_search_matches(&mut self) {
+        self.search_matches.clear();
+        self.search_match_idx = None;
+        let query = match &self.search_query {
+            Some(q) => q.to_lowercase(),
+            None => return,
+        };
+        for (i, line) in self.diff_panel.lines.iter().enumerate() {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            if text.to_lowercase().contains(&query) {
+                self.search_matches.push(i);
+            }
         }
     }
 
@@ -278,9 +415,110 @@ impl App {
         self.status_bar.submit_mode = false;
         match key.code {
             KeyCode::Char('a') => Action::SubmitReview(ReviewEvent::Approve),
-            KeyCode::Char('r') => Action::SubmitReview(ReviewEvent::RequestChanges),
-            KeyCode::Char('c') => Action::SubmitReview(ReviewEvent::Comment),
+            KeyCode::Char('r') => {
+                if self.review.comments.is_empty() {
+                    // No inline comments — collect a review body
+                    self.review.body_editor = Some(BodyEditor::new(
+                        BodyEditorPurpose::ReviewBody(ReviewEvent::RequestChanges),
+                    ));
+                    Action::Noop
+                } else {
+                    Action::SubmitReview(ReviewEvent::RequestChanges)
+                }
+            }
+            KeyCode::Char('c') => {
+                if self.review.comments.is_empty() {
+                    // No inline comments — collect a review body
+                    self.review.body_editor = Some(BodyEditor::new(
+                        BodyEditorPurpose::ReviewBody(ReviewEvent::Comment),
+                    ));
+                    Action::Noop
+                } else {
+                    Action::SubmitReview(ReviewEvent::Comment)
+                }
+            }
             _ => Action::Noop,
+        }
+    }
+
+    fn handle_body_editor_key(&mut self, key: KeyEvent) -> Action {
+        let editor = match self.review.body_editor.as_mut() {
+            Some(e) => e,
+            None => return Action::Noop,
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                self.review.body_editor = None;
+                Action::Noop
+            }
+            // Alt+Enter or Ctrl+S to submit
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.submit_body_editor()
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.submit_body_editor()
+            }
+            KeyCode::Enter => {
+                editor.insert_newline();
+                Action::Noop
+            }
+            KeyCode::Backspace => {
+                editor.backspace();
+                Action::Noop
+            }
+            KeyCode::Delete => {
+                editor.delete();
+                Action::Noop
+            }
+            KeyCode::Left => {
+                editor.move_left();
+                Action::Noop
+            }
+            KeyCode::Right => {
+                editor.move_right();
+                Action::Noop
+            }
+            KeyCode::Up => {
+                editor.move_up();
+                Action::Noop
+            }
+            KeyCode::Down => {
+                editor.move_down();
+                Action::Noop
+            }
+            KeyCode::Home => {
+                editor.move_home();
+                Action::Noop
+            }
+            KeyCode::End => {
+                editor.move_end();
+                Action::Noop
+            }
+            KeyCode::Char(c) => {
+                editor.insert_char(c);
+                Action::Noop
+            }
+            _ => Action::Noop,
+        }
+    }
+
+    fn submit_body_editor(&mut self) -> Action {
+        let editor = match self.review.body_editor.take() {
+            Some(e) => e,
+            None => return Action::Noop,
+        };
+        let body = editor.body();
+        if body.trim().is_empty() {
+            return Action::Noop;
+        }
+        match editor.purpose {
+            BodyEditorPurpose::ReviewBody(event) => {
+                Action::SubmitReviewWithBody(event, body)
+            }
+            BodyEditorPurpose::IssueComment => {
+                Action::PostIssueComment(body)
+            }
         }
     }
 
@@ -338,7 +576,22 @@ impl App {
                 self.status_bar.submit_mode = true;
             }
             Action::SubmitReview(event) => {
-                self.submit_review(event.clone());
+                self.submit_review(event.clone(), String::new());
+            }
+            Action::SubmitReviewWithBody(event, body) => {
+                self.submit_review(event.clone(), body.clone());
+            }
+            Action::PostIssueComment(body) => {
+                self.post_issue_comment(body.clone());
+            }
+            Action::IssueCommentPosted => {
+                // Refresh comments to show the new one
+                if let (Some(repo), Some(pr)) = (&self.review.repo, self.review.pr_number) {
+                    self.fetch_pr_comments(repo, pr);
+                }
+            }
+            Action::IssueCommentError(_) => {
+                // Error shown via status bar
             }
             Action::ReviewSubmitted(_url) => {
                 self.review.comments.clear();
@@ -362,14 +615,40 @@ impl App {
             Action::NavigateToFile(repo, pr_number, file_path) => {
                 self.navigate_to_file(repo, *pr_number, file_path);
             }
+            Action::SearchNext => {
+                if !self.search_matches.is_empty() {
+                    let idx = match self.search_match_idx {
+                        Some(i) => (i + 1) % self.search_matches.len(),
+                        None => 0,
+                    };
+                    self.search_match_idx = Some(idx);
+                    self.jump_to_search_match(self.search_matches[idx]);
+                }
+            }
+            Action::SearchPrev => {
+                if !self.search_matches.is_empty() {
+                    let idx = match self.search_match_idx {
+                        Some(0) | None => self.search_matches.len() - 1,
+                        Some(i) => i - 1,
+                    };
+                    self.search_match_idx = Some(idx);
+                    self.jump_to_search_match(self.search_matches[idx]);
+                }
+            }
             Action::CursorComment => {
                 if let Some(cursor) = self.diff_panel.cursor_line {
                     // Check if this line has an existing thread
                     let has_thread = self.cursor_has_thread(cursor);
                     let has_pending = self.cursor_has_pending(cursor);
                     if has_thread && !has_pending {
-                        // Toggle thread expansion
-                        self.toggle_thread_expansion(cursor);
+                        let is_expanded = self.cursor_thread_expanded(cursor);
+                        if !is_expanded {
+                            // First press: expand thread
+                            self.toggle_thread_expansion(cursor);
+                        } else {
+                            // Already expanded: open reply editor
+                            self.open_reply_editor(cursor);
+                        }
                     } else {
                         self.open_inline_editor(cursor, None);
                     }
@@ -377,6 +656,33 @@ impl App {
             }
             Action::OpenInEditor => {
                 return self.prepare_editor_launch();
+            }
+            _ => {}
+        }
+
+        // Handle check actions
+        match action {
+            Action::ChecksStarted(repo, pr, sha) => {
+                self.checks.mark_in_flight(repo, *pr);
+                self.checks.states.insert(
+                    (repo.clone(), *pr),
+                    crate::checks::PrCheckState {
+                        sha: sha.clone(),
+                        source: crate::checks::CheckSource::Local,
+                        checks: vec![],
+                    },
+                );
+            }
+            Action::ChecksUpdate(repo, pr, results) => {
+                if let Some(state) = self.checks.states.get_mut(&(repo.clone(), *pr)) {
+                    state.checks = results.clone();
+                }
+                self.refresh_summary_if_viewing(repo, *pr);
+            }
+            Action::ChecksComplete(repo, pr, state) => {
+                self.checks.clear_in_flight(repo, *pr);
+                self.checks.states.insert((repo.clone(), *pr), state.clone());
+                self.refresh_summary_if_viewing(repo, *pr);
             }
             _ => {}
         }
@@ -405,14 +711,26 @@ impl App {
                 if let Some(pr) = prs.iter().find(|p| p.number == *pr_number) {
                     let changed_pr = self.review.repo.as_deref() != Some(repo)
                         || self.review.pr_number != Some(*pr_number);
+                    let head_sha = pr.head_sha.clone();
                     self.review.repo = Some(repo.clone());
                     self.review.pr_number = Some(*pr_number);
-                    self.review.head_sha = Some(pr.head_sha.clone());
+                    self.review.head_sha = Some(head_sha.clone());
                     if changed_pr {
                         self.review.load_from_disk();
                         self.status_bar.review_count = self.review.comments.len();
                         self.sync_comment_count();
-                        self.pr_panel.load_reviewed(repo, *pr_number);
+                    }
+                    // Always reload reviewed files so SHA changes trigger invalidation
+                    self.pr_panel.load_reviewed(repo, *pr_number, &head_sha);
+
+                    // Trigger checks only for the currently selected PR
+                    let is_selected = matches!(
+                        self.pr_panel.selected_node(),
+                        Some(NodeId::Pr(r, n)) | Some(NodeId::File(r, n, _))
+                            if r == repo && *n == *pr_number
+                    );
+                    if is_selected {
+                        self.maybe_trigger_checks(repo, *pr_number);
                     }
                 }
             }
@@ -471,8 +789,9 @@ impl App {
                 if let Some(result) = result.or_else(|| self.pr_panel.get_analysis(repo, pr_number))
                 {
                     let pr_data = self.pr_panel.get_pr(repo, pr_number);
+                    let checks = self.pr_panel.get_check_state(repo, pr_number).cloned();
                     self.diff_panel
-                        .show_pr_summary(repo, pr_number, &result, &self.pr_panel.overlap_map, pr_data);
+                        .show_pr_summary(repo, pr_number, &result, &self.pr_panel.overlap_map, pr_data, checks.as_ref());
                 }
             }
             _ => {}
@@ -493,6 +812,11 @@ impl App {
             let file_ctx = self.build_file_context(repo, pr_number);
             let cached = self.lookup_cached_content(repo, pr_number, file_path);
             self.diff_panel.show_file(repo, pr_number, file_path, &result, file_ctx.as_ref(), cached, &self.pr_panel.overlap_map);
+        }
+
+        // Rebuild search matches for new content
+        if self.search_query.is_some() {
+            self.rebuild_search_matches();
         }
     }
 
@@ -654,6 +978,54 @@ impl App {
         self.review.find_comment_at(file_path, info.file_line, info.side).is_some()
     }
 
+    fn cursor_thread_expanded(&self, rendered_line: usize) -> bool {
+        let file_path = match self.diff_panel.current_file() {
+            Some(f) => f,
+            None => return false,
+        };
+        let info = match self.diff_panel.line_map.get(rendered_line) {
+            Some(Some(info)) => info,
+            _ => return false,
+        };
+        let key = (file_path.to_string(), info.file_line, info.side);
+        self.diff_panel.expanded_threads.contains(&key)
+    }
+
+    fn open_reply_editor(&mut self, rendered_line: usize) {
+        let file_path = match self.diff_panel.current_file() {
+            Some(f) => f.to_string(),
+            None => return,
+        };
+        let info = match self.diff_panel.line_map.get(rendered_line) {
+            Some(Some(info)) if info.commentable => info.clone(),
+            _ => return,
+        };
+
+        // Find the thread at this position to get its first_comment_id
+        let first_comment_id = self.diff_panel.current_context()
+            .and_then(|(repo, pr)| self.comments_cache.get(&(repo.clone(), *pr)))
+            .and_then(|comments| {
+                comments.threads.iter()
+                    .find(|t| t.path == file_path && t.line == info.file_line && t.diff_side == info.side)
+                    .and_then(|t| t.first_comment_id())
+            });
+
+        let first_comment_id = match first_comment_id {
+            Some(id) => id,
+            None => return,
+        };
+
+        let mut editor = InlineEditor::new(
+            rendered_line,
+            file_path,
+            info.file_line,
+            None,
+            info.side,
+        );
+        editor.reply_to_comment_id = Some(first_comment_id);
+        self.review.inline_editor = Some(editor);
+    }
+
     fn toggle_thread_expansion(&mut self, rendered_line: usize) {
         let file_path = match self.diff_panel.current_file() {
             Some(f) => f.to_string(),
@@ -692,6 +1064,7 @@ impl App {
                 start_line: editor.target_start_line,
                 side: editor.target_side,
                 body,
+                reply_to_comment_id: editor.reply_to_comment_id,
             });
         }
 
@@ -705,7 +1078,30 @@ impl App {
         }
     }
 
-    fn submit_review(&self, event: ReviewEvent) {
+    fn post_issue_comment(&self, body: String) {
+        let repo = match &self.review.repo {
+            Some(r) => r.clone(),
+            None => return,
+        };
+        let pr_number = match self.review.pr_number {
+            Some(n) => n,
+            None => return,
+        };
+        let tx = self.action_tx.clone();
+        let github_client = self.github_client.clone();
+        tokio::spawn(async move {
+            match github_client.post_issue_comment(&repo, pr_number, &body).await {
+                Ok(()) => {
+                    let _ = tx.send(Action::IssueCommentPosted);
+                }
+                Err(e) => {
+                    let _ = tx.send(Action::IssueCommentError(format!("Comment failed: {e}")));
+                }
+            }
+        });
+    }
+
+    fn submit_review(&self, event: ReviewEvent, body: String) {
         let repo = match &self.review.repo {
             Some(r) => r.clone(),
             None => return,
@@ -719,27 +1115,42 @@ impl App {
             None => return,
         };
 
-        let comments: Vec<inspect_core::github::ReviewCommentInput> = self
-            .review
-            .comments
-            .iter()
-            .map(|c| inspect_core::github::ReviewCommentInput {
-                path: c.file_path.clone(),
-                line: c.line as u64,
-                body: c.body.clone(),
-                start_line: c.start_line.map(|sl| sl as u64),
-            })
-            .collect();
+        // Split into replies (to existing threads) and new comments
+        let mut replies: Vec<(u64, String)> = Vec::new();
+        let mut new_comments: Vec<inspect_core::github::ReviewCommentInput> = Vec::new();
+
+        for c in &self.review.comments {
+            if let Some(comment_id) = c.reply_to_comment_id {
+                replies.push((comment_id, c.body.clone()));
+            } else {
+                new_comments.push(inspect_core::github::ReviewCommentInput {
+                    path: c.file_path.clone(),
+                    line: c.line as u64,
+                    body: c.body.clone(),
+                    start_line: c.start_line.map(|sl| sl as u64),
+                });
+            }
+        }
 
         let review = inspect_core::github::CreateReview {
             commit_id: head_sha,
             event: event.as_str().to_string(),
-            body: String::new(),
-            comments,
+            body,
+            comments: new_comments,
         };
 
         let tx = self.action_tx.clone();
+        let github_client = self.github_client.clone();
         tokio::spawn(async move {
+            // Submit replies individually via REST API
+            for (comment_id, body) in &replies {
+                if let Err(e) = github_client.reply_to_comment(&repo, pr_number, *comment_id, body).await {
+                    let _ = tx.send(Action::ReviewError(format!("Reply failed: {e}")));
+                    return;
+                }
+            }
+
+            // Submit the review with new comments (or just the event if no new comments)
             let client = match inspect_core::github::GitHubClient::new() {
                 Ok(c) => c,
                 Err(e) => {
@@ -750,6 +1161,17 @@ impl App {
             match client.create_review(&repo, pr_number, &review).await {
                 Ok(resp) => {
                     let _ = tx.send(Action::ReviewSubmitted(resp.html_url));
+                    // Refresh comments to show new replies
+                    match github_client.get_pr_comments(&repo, pr_number).await {
+                        Ok(comments) => {
+                            let _ = tx.send(Action::CommentsLoaded(
+                                repo,
+                                pr_number,
+                                Box::new(comments),
+                            ));
+                        }
+                        Err(_) => {}
+                    }
                 }
                 Err(e) => {
                     let _ = tx.send(Action::ReviewError(format!("Review submit failed: {e}")));
@@ -869,7 +1291,58 @@ impl App {
             render_help_overlay(frame, main_area);
         }
 
-        self.status_bar.render(frame, status_area);
+        if let Some(editor) = &self.review.body_editor {
+            render_body_editor_overlay(frame, main_area, editor);
+        }
+
+        // Render search input or esc-pending hint over status bar, or normal status bar
+        if let Some(ref input) = self.search_input {
+            let line = Line::from(vec![
+                Span::styled("/", Style::default().fg(Color::Yellow)),
+                Span::raw(input.clone()),
+                Span::styled("_", Style::default().bg(Color::Rgb(100, 100, 160))),
+            ]);
+            let bar = Paragraph::new(line).style(Style::default().bg(Color::Rgb(30, 30, 40)));
+            frame.render_widget(bar, status_area);
+        } else if self.esc_pending {
+            let line = Line::from(vec![
+                Span::styled(
+                    " Press Esc again to quit",
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]);
+            let bar = Paragraph::new(line).style(Style::default().bg(Color::Rgb(30, 30, 40)));
+            frame.render_widget(bar, status_area);
+        } else if self.search_query.is_some() {
+            let match_info = if self.search_matches.is_empty() {
+                "no matches".to_string()
+            } else {
+                let idx = self.search_match_idx.map(|i| i + 1).unwrap_or(0);
+                format!("{}/{}", idx, self.search_matches.len())
+            };
+            let query = self.search_query.as_deref().unwrap_or("");
+            let line = Line::from(vec![
+                Span::styled(
+                    format!(" /{query}"),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(
+                    format!("  [{match_info}]"),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw("  "),
+                Span::styled("n", Style::default().fg(Color::Cyan)),
+                Span::raw(":next "),
+                Span::styled("N", Style::default().fg(Color::Cyan)),
+                Span::raw(":prev "),
+                Span::styled("Esc", Style::default().fg(Color::Cyan)),
+                Span::raw(":clear"),
+            ]);
+            let bar = Paragraph::new(line).style(Style::default().bg(Color::Rgb(30, 30, 40)));
+            frame.render_widget(bar, status_area);
+        } else {
+            self.status_bar.render(frame, status_area);
+        }
     }
 
     pub fn start_loading_prs(&mut self) {
@@ -987,6 +1460,58 @@ impl App {
                 }
             });
         }
+    }
+
+    /// If the diff panel is currently showing this PR's summary, re-render it
+    /// so updated check state appears.
+    fn refresh_summary_if_viewing(&mut self, repo: &str, pr_number: u64) {
+        if let Some(NodeId::Pr(ref r, pn)) = self.pr_panel.selected_node().cloned() {
+            if r == repo && pn == pr_number {
+                if let Some(result) = self.pr_panel.get_analysis(repo, pr_number) {
+                    let pr_data = self.pr_panel.get_pr(repo, pr_number);
+                    let checks = self.pr_panel.get_check_state(repo, pr_number).cloned();
+                    self.diff_panel.show_pr_summary(
+                        repo,
+                        pr_number,
+                        &result,
+                        &self.pr_panel.overlap_map,
+                        pr_data,
+                        checks.as_ref(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn maybe_trigger_checks(&mut self, repo: &str, pr_number: u64) {
+        let pr = self
+            .pr_cache
+            .get(repo)
+            .and_then(|prs| prs.iter().find(|p| p.number == pr_number));
+        let pr = match pr {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        if !self.checks.needs_check(repo, pr_number, &pr.head_sha) {
+            return;
+        }
+
+        let repo_config = match self.config.repos.iter().find(|r| r.name == repo) {
+            Some(r) => r.clone(),
+            None => return,
+        };
+
+        self.checks.mark_in_flight(repo, pr_number);
+
+        let tx = self.action_tx.clone();
+        let client = self.github_client.clone();
+        let sha = pr.head_sha.clone();
+        let head_ref = pr.head_ref.clone();
+
+        tokio::spawn(async move {
+            crate::checks::trigger_checks(tx, client, repo_config, pr_number, sha, head_ref).await;
+        });
     }
 
     fn trigger_analysis(&self, repo: &str, pr_number: u64) {
@@ -1134,7 +1659,7 @@ fn git_show_file(
 
 fn render_help_overlay(frame: &mut Frame, area: Rect) {
     let width = 62.min(area.width);
-    let height = 20.min(area.height);
+    let height = 22.min(area.height);
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let overlay = Rect::new(x, y, width, height);
@@ -1166,32 +1691,39 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
             Span::styled("Comment on line", desc_style),
         ]),
         Line::from(vec![
-            Span::styled(" Tab            ", key_style),
-            Span::styled("Switch panel", desc_style),
+            Span::styled(" J/K (shift)    ", key_style),
+            Span::styled("Half page   ", desc_style),
             Span::raw("    "),
             Span::styled("Alt+Enter ", key_style),
             Span::styled("Save comment", desc_style),
         ]),
         Line::from(vec![
-            Span::styled(" h/l            ", key_style),
-            Span::styled("Scroll horiz", desc_style),
+            Span::styled(" { / }          ", key_style),
+            Span::styled("Prev/next hk", desc_style),
             Span::raw("    "),
             Span::styled("Esc       ", key_style),
             Span::styled("Cancel comment", desc_style),
         ]),
         Line::from(vec![
-            Span::styled(" g / G          ", key_style),
-            Span::styled("Top / bottom", desc_style),
+            Span::styled(" Tab            ", key_style),
+            Span::styled("Switch panel", desc_style),
             Span::raw("    "),
             Span::styled("Ctrl+R    ", key_style),
             Span::styled("Submit review", desc_style),
         ]),
         Line::from(vec![
-            Span::styled(" Ctrl+D/U       ", key_style),
-            Span::styled("Page dn/up  ", desc_style),
+            Span::styled(" h/l            ", key_style),
+            Span::styled("Scroll horiz", desc_style),
             Span::raw("    "),
             Span::styled("e         ", key_style),
             Span::styled("Edit in $EDITOR", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled(" g / G          ", key_style),
+            Span::styled("Top / bottom", desc_style),
+            Span::raw("    "),
+            Span::styled("/         ", key_style),
+            Span::styled("Search in diff", desc_style),
         ]),
         Line::from(""),
         Line::from(vec![
@@ -1222,8 +1754,13 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
             Span::styled(" drag           ", key_style),
             Span::styled("Select range", desc_style),
             Span::raw("    "),
-            Span::styled("q / Esc   ", key_style),
+            Span::styled("q         ", key_style),
             Span::styled("Quit", desc_style),
+        ]),
+        Line::from(vec![
+            Span::raw("                               "),
+            Span::styled("Esc       ", key_style),
+            Span::styled("Back / quit (2x)", desc_style),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -1238,4 +1775,83 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, overlay);
+}
+
+fn render_body_editor_overlay(frame: &mut Frame, area: Rect, editor: &BodyEditor) {
+    let width = 70.min(area.width);
+    let height = 16.min(area.height);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let overlay = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, overlay);
+
+    let title = match &editor.purpose {
+        BodyEditorPurpose::ReviewBody(ReviewEvent::RequestChanges) => " Request Changes ",
+        BodyEditorPurpose::ReviewBody(ReviewEvent::Comment) => " Review Comment ",
+        BodyEditorPurpose::ReviewBody(ReviewEvent::Approve) => " Approve ",
+        BodyEditorPurpose::IssueComment => " PR Comment ",
+    };
+
+    let block = Block::bordered()
+        .title(Span::styled(title, Style::default().fg(Color::Yellow)))
+        .border_style(Style::default().fg(Color::Rgb(80, 80, 120)));
+
+    let inner = block.inner(overlay);
+
+    // Reserve last line for hints
+    let editor_height = inner.height.saturating_sub(1) as usize;
+    let hint_area = Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1);
+    let text_area = Rect::new(inner.x, inner.y, inner.width, editor_height as u16);
+
+    // Render the editor text
+    let mut lines: Vec<Line> = Vec::new();
+    let visible_width = text_area.width as usize;
+    for (i, line_text) in editor.lines.iter().enumerate().take(editor_height) {
+        if i == editor.cursor.0 {
+            // Show cursor
+            let col = editor.cursor.1;
+            let before = &line_text[..col.min(line_text.len())];
+            let cursor_char = line_text.get(col..col + 1).unwrap_or(" ");
+            let after = if col + 1 < line_text.len() {
+                &line_text[col + 1..]
+            } else {
+                ""
+            };
+            lines.push(Line::from(vec![
+                Span::raw(truncate_str(before, visible_width)),
+                Span::styled(
+                    cursor_char.to_string(),
+                    Style::default().bg(Color::Rgb(100, 100, 160)).fg(Color::White),
+                ),
+                Span::raw(after.to_string()),
+            ]));
+        } else {
+            lines.push(Line::from(truncate_str(line_text, visible_width)));
+        }
+    }
+
+    // Pad remaining lines
+    while lines.len() < editor_height {
+        lines.push(Line::from(""));
+    }
+
+    let hint = Line::from(vec![
+        Span::styled("Alt+Enter", Style::default().fg(Color::Cyan)),
+        Span::raw(":submit  "),
+        Span::styled("Esc", Style::default().fg(Color::Cyan)),
+        Span::raw(":cancel"),
+    ]);
+
+    frame.render_widget(block, overlay);
+    frame.render_widget(Paragraph::new(lines), text_area);
+    frame.render_widget(Paragraph::new(vec![hint]), hint_area);
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        s[..max].to_string()
+    }
 }
