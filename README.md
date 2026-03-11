@@ -4,7 +4,7 @@
 
 A terminal UI for reviewing pull requests with semantic diff analysis.
 
-PRfait fetches open PRs from configured GitHub repositories, runs semantic analysis (via [inspect-core](https://github.com/SundaeSwap-finance/inspect) and [sem](https://github.com/Ataraxy-Labs/sem)) to identify meaningful entity-level changes, and presents them in a TUI with structural diffs, risk scoring, and inline review comments.
+PRfait fetches open PRs from configured GitHub repositories, runs semantic analysis (via [inspect-core](https://github.com/Ataraxy-Labs/inspect) and [sem](https://github.com/Ataraxy-Labs/sem)) to identify meaningful entity-level changes, and presents them in a TUI with structural diffs, risk scoring, and inline review comments.
 
 ## Features
 
