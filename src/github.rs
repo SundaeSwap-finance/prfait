@@ -16,6 +16,10 @@ pub struct PrData {
     pub head_sha: String,
     pub updated_at: String,
     pub files: Vec<PrFileData>,
+    /// PR description / body text (may be empty)
+    pub body: String,
+    /// URL to the PR on GitHub
+    pub html_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +76,8 @@ struct GqlPr {
     head_ref_oid: String,
     updated_at: String,
     files: Option<GqlFileConnection>,
+    body: Option<String>,
+    url: String,
 }
 
 #[derive(Deserialize)]
@@ -212,7 +218,7 @@ query($owner: String!, $repo: String!) {
   repository(owner: $owner, name: $repo) {
     pullRequests(first: 50, states: [OPEN], orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
-        number title
+        number title body url
         author { login }
         additions deletions changedFiles
         headRefName baseRefName headRefOid updatedAt
@@ -283,6 +289,8 @@ query($owner: String!, $repo: String!) {
                             .collect()
                     })
                     .unwrap_or_default(),
+                body: pr.body.unwrap_or_default(),
+                html_url: pr.url,
             })
             .collect();
 
@@ -421,5 +429,60 @@ query($owner: String!, $repo: String!, $number: Int!) {
         }
 
         Ok(resp.text().await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_pr_data(body: &str, html_url: &str) -> PrData {
+        PrData {
+            number: 42,
+            title: "Test PR".to_string(),
+            author: "octocat".to_string(),
+            additions: 10,
+            deletions: 5,
+            changed_files: 2,
+            head_ref: "feature-branch".to_string(),
+            base_ref: "main".to_string(),
+            head_sha: "abc123".to_string(),
+            updated_at: "2025-01-15T08:30:00Z".to_string(),
+            files: vec![],
+            body: body.to_string(),
+            html_url: html_url.to_string(),
+        }
+    }
+
+    #[test]
+    fn pr_data_body_field_stores_description() {
+        let pr = make_pr_data("This PR fixes a bug.", "https://github.com/owner/repo/pull/42");
+        assert_eq!(pr.body, "This PR fixes a bug.");
+    }
+
+    #[test]
+    fn pr_data_html_url_field_stores_url() {
+        let pr = make_pr_data("desc", "https://github.com/owner/repo/pull/42");
+        assert_eq!(pr.html_url, "https://github.com/owner/repo/pull/42");
+    }
+
+    #[test]
+    fn pr_data_empty_body_is_valid() {
+        let pr = make_pr_data("", "https://github.com/owner/repo/pull/42");
+        assert_eq!(pr.body, "");
+    }
+
+    #[test]
+    fn pr_data_empty_html_url_is_valid() {
+        let pr = make_pr_data("Some description", "");
+        assert_eq!(pr.html_url, "");
+    }
+
+    #[test]
+    fn pr_data_multiline_body() {
+        let body = "Line one\nLine two\nLine three";
+        let pr = make_pr_data(body, "https://github.com/owner/repo/pull/1");
+        assert_eq!(pr.body.lines().count(), 3);
+        assert_eq!(pr.body, body);
     }
 }

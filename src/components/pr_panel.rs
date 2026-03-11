@@ -118,6 +118,11 @@ impl PrPanel {
         self.analyses.get(&(repo.to_string(), pr_number)).cloned()
     }
 
+    /// Look up cached PrData for a specific PR.
+    pub fn get_pr(&self, repo: &str, pr_number: u64) -> Option<&PrData> {
+        self.repos.get(repo)?.iter().find(|p| p.number == pr_number)
+    }
+
     /// Update file-level comment counts for a PR from the full pending comments list.
     pub fn set_comment_counts(&mut self, repo: &str, pr_number: u64, comments: &[crate::review::PendingComment]) {
         // Clear old counts for this PR
@@ -641,4 +646,100 @@ pub fn max_file_risk(
         })
         .reduce(f64::max)
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::github::PrData;
+
+    fn make_pr(number: u64, body: &str, html_url: &str) -> PrData {
+        PrData {
+            number,
+            title: format!("PR #{number}"),
+            author: "author".to_string(),
+            additions: 0,
+            deletions: 0,
+            changed_files: 0,
+            head_ref: "head".to_string(),
+            base_ref: "main".to_string(),
+            head_sha: "sha".to_string(),
+            updated_at: "2025-01-15T08:30:00Z".to_string(),
+            files: vec![],
+            body: body.to_string(),
+            html_url: html_url.to_string(),
+        }
+    }
+
+    #[test]
+    fn get_pr_returns_pr_by_number() {
+        let mut panel = PrPanel::new();
+        panel.set_prs("owner/repo".to_string(), vec![
+            make_pr(1, "first PR body", "https://github.com/owner/repo/pull/1"),
+            make_pr(2, "second PR body", "https://github.com/owner/repo/pull/2"),
+        ]);
+
+        let pr = panel.get_pr("owner/repo", 1).expect("PR 1 should exist");
+        assert_eq!(pr.number, 1);
+        assert_eq!(pr.body, "first PR body");
+        assert_eq!(pr.html_url, "https://github.com/owner/repo/pull/1");
+    }
+
+    #[test]
+    fn get_pr_returns_correct_pr_when_multiple_exist() {
+        let mut panel = PrPanel::new();
+        panel.set_prs("owner/repo".to_string(), vec![
+            make_pr(10, "body ten", "https://github.com/owner/repo/pull/10"),
+            make_pr(20, "body twenty", "https://github.com/owner/repo/pull/20"),
+        ]);
+
+        let pr = panel.get_pr("owner/repo", 20).expect("PR 20 should exist");
+        assert_eq!(pr.number, 20);
+        assert_eq!(pr.body, "body twenty");
+        assert_eq!(pr.html_url, "https://github.com/owner/repo/pull/20");
+    }
+
+    #[test]
+    fn get_pr_returns_none_for_missing_number() {
+        let mut panel = PrPanel::new();
+        panel.set_prs("owner/repo".to_string(), vec![
+            make_pr(1, "body", "https://github.com/owner/repo/pull/1"),
+        ]);
+
+        assert!(panel.get_pr("owner/repo", 999).is_none());
+    }
+
+    #[test]
+    fn get_pr_returns_none_for_missing_repo() {
+        let mut panel = PrPanel::new();
+        panel.set_prs("owner/repo".to_string(), vec![
+            make_pr(1, "body", "https://github.com/owner/repo/pull/1"),
+        ]);
+
+        assert!(panel.get_pr("other/repo", 1).is_none());
+    }
+
+    #[test]
+    fn get_pr_returns_pr_with_empty_body_and_url() {
+        let mut panel = PrPanel::new();
+        panel.set_prs("owner/repo".to_string(), vec![
+            make_pr(5, "", ""),
+        ]);
+
+        let pr = panel.get_pr("owner/repo", 5).expect("PR 5 should exist");
+        assert_eq!(pr.body, "");
+        assert_eq!(pr.html_url, "");
+    }
+
+    #[test]
+    fn get_pr_returns_pr_with_multiline_body() {
+        let body = "Line 1\nLine 2\nLine 3";
+        let mut panel = PrPanel::new();
+        panel.set_prs("owner/repo".to_string(), vec![
+            make_pr(7, body, "https://github.com/owner/repo/pull/7"),
+        ]);
+
+        let pr = panel.get_pr("owner/repo", 7).expect("PR 7 should exist");
+        assert_eq!(pr.body.lines().count(), 3);
+    }
 }
