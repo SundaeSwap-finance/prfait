@@ -420,9 +420,13 @@ impl Component for PrPanel {
             }
             Action::TreeClick(col, row) => {
                 let pos = Position::new(*col, *row);
+                let previously_selected = self.tree_state.selected().to_vec();
                 if self.tree_state.click_at(pos) {
-                    // Also expand the clicked node so clicking opens collapsed items
-                    self.tree_state.open(self.tree_state.selected().to_vec());
+                    // click_at() handles same-item clicks (toggles expand/collapse)
+                    // For different-item clicks, also toggle to match click behavior
+                    if self.tree_state.selected() != previously_selected {
+                        self.tree_state.toggle_selected();
+                    }
                     self.selection_changed_action()
                 } else {
                     Action::Noop
