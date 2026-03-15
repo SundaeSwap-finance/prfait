@@ -2707,6 +2707,7 @@ mod tests {
             &mut overlap_click_map,
             "",
             url,
+            None,
         );
 
         let text = lines_to_text(&lines);
@@ -2732,6 +2733,7 @@ mod tests {
             &mut overlap_click_map,
             "",
             "",
+            None,
         );
 
         let text = lines_to_text(&lines);
@@ -2758,6 +2760,7 @@ mod tests {
             &mut overlap_click_map,
             body,
             "",
+            None,
         );
 
         let text = lines_to_text(&lines);
@@ -2787,6 +2790,7 @@ mod tests {
             &mut overlap_click_map,
             "",
             "",
+            None,
         );
 
         let text = lines_to_text(&lines);
@@ -2814,6 +2818,7 @@ mod tests {
             &mut overlap_click_map,
             body,
             url,
+            None,
         );
 
         let text = lines_to_text(&lines);
@@ -2839,6 +2844,7 @@ mod tests {
             &mut overlap_click_map,
             body,
             "",
+            None,
         );
 
         let text = lines_to_text(&lines);
@@ -2863,6 +2869,7 @@ mod tests {
             &mut overlap_click_map,
             "",
             "",
+            None,
         );
 
         let text = lines_to_text(&lines);
@@ -2900,7 +2907,7 @@ mod tests {
         let overlaps = HashMap::new();
         let mut panel = DiffPanel::new();
 
-        panel.show_pr_summary("owner/repo", 5, &result, &overlaps, Some(&pr_data));
+        panel.show_pr_summary("owner/repo", 5, &result, &overlaps, Some(&pr_data), None);
 
         // After show_pr_summary, base_lines are built by rebuild_base_lines.
         // We verify indirectly by checking lines_dirty is false and base_lines are populated.
@@ -2921,7 +2928,7 @@ mod tests {
         let overlaps = HashMap::new();
         let mut panel = DiffPanel::new();
 
-        panel.show_pr_summary("owner/repo", 3, &result, &overlaps, None);
+        panel.show_pr_summary("owner/repo", 3, &result, &overlaps, None, None);
 
         assert!(!panel.base_lines.is_empty(), "base_lines should have content");
 

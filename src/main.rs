@@ -29,8 +29,33 @@ async fn main() -> color_eyre::Result<()> {
 
     // Load config, running onboarding wizard if no repos configured
     let mut config = Config::load()?;
+
+    // Optional positional arg: path to a git repo to focus on (e.g. `prfait .` or `prfait ~/proj/abc`)
+    let path_arg = std::env::args().nth(1);
+    let auto_repo = path_arg.and_then(|p| {
+        let expanded = if p.starts_with('~') {
+            dirs::home_dir()
+                .map(|h| format!("{}{}", h.display(), &p[1..]))
+                .unwrap_or(p)
+        } else {
+            p
+        };
+        let abs = std::fs::canonicalize(&expanded).ok()?;
+        detect_github_repo(abs.to_str()?)
+    });
+    if let Some(ref detected) = auto_repo {
+        if !config.repos.iter().any(|r| r.name == detected.name) {
+            config.repos.push(detected.clone());
+        }
+    }
+
     if config.repos.is_empty() {
         config = onboarding::run_onboarding()?;
+    }
+
+    // When a path arg was given, filter to just that repo
+    if let Some(ref detected) = auto_repo {
+        config.repos.retain(|r| r.name == detected.name);
     }
 
     // Resolve GitHub token
@@ -239,4 +264,61 @@ fn generate_suggestion_comments(edited: &str, original: &str, app: &mut App) {
         app.pr_panel.set_comment_counts(repo, pr, &app.review.comments);
     }
     app.review.save_to_disk();
+}
+
+/// Detect if the given path is inside a git repo with a GitHub remote, and return a RepoConfig for it.
+fn detect_github_repo(path: &str) -> Option<config::RepoConfig> {
+    // Get the repo root
+    let root = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(path)
+        .output()
+        .ok()?;
+    if !root.status.success() {
+        return None;
+    }
+    let local_path = String::from_utf8_lossy(&root.stdout).trim().to_string();
+
+    // Get the remote URL (try origin first)
+    let remote = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(&local_path)
+        .output()
+        .ok()?;
+    if !remote.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&remote.stdout).trim().to_string();
+
+    // Parse GitHub owner/repo from common URL formats:
+    //   https://github.com/owner/repo.git
+    //   git@github.com:owner/repo.git
+    //   https://github.com/owner/repo
+    let repo_name = parse_github_repo_name(&url)?;
+
+    Some(config::RepoConfig {
+        name: repo_name,
+        local_path: Some(local_path.into()),
+        checks: vec![],
+        prefer_ci: true,
+    })
+}
+
+/// Parse "owner/repo" from a GitHub remote URL.
+fn parse_github_repo_name(url: &str) -> Option<String> {
+    let path = if let Some(rest) = url.strip_prefix("git@github.com:") {
+        rest.to_string()
+    } else if url.contains("github.com/") {
+        url.split("github.com/").nth(1)?.to_string()
+    } else {
+        return None;
+    };
+
+    let path = path.strip_suffix(".git").unwrap_or(&path);
+    // Should be "owner/repo"
+    if path.contains('/') && !path.ends_with('/') {
+        Some(path.to_string())
+    } else {
+        None
+    }
 }

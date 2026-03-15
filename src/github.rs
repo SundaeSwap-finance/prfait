@@ -486,6 +486,40 @@ query($owner: String!, $repo: String!, $number: Int!) {
         Ok(resp.json().await?)
     }
 
+    /// Fetch the merge-base SHA between two refs via the GitHub compare API.
+    /// This is what GitHub uses to compute PR diffs — comparing the merge-base
+    /// against the head ensures we only see changes introduced by the PR branch,
+    /// not unrelated changes from the base branch moving forward.
+    pub async fn get_merge_base(
+        &self,
+        repo: &str,
+        base: &str,
+        head: &str,
+    ) -> color_eyre::Result<String> {
+        let resp = self
+            .http
+            .get(format!(
+                "https://api.github.com/repos/{repo}/compare/{base}...{head}"
+            ))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            color_eyre::eyre::bail!("GitHub compare API {status}: {text}");
+        }
+
+        let json: serde_json::Value = resp.json().await?;
+        let sha = json
+            .get("merge_base_commit")
+            .and_then(|c| c.get("sha"))
+            .and_then(|s| s.as_str())
+            .ok_or_else(|| color_eyre::eyre::eyre!("No merge_base_commit in compare response"))?;
+
+        Ok(sha.to_string())
+    }
+
     /// Fetch raw diff for a PR (for semantic analysis of remote-only repos)
     pub async fn get_pr_diff(&self, repo: &str, number: u64) -> color_eyre::Result<String> {
         let resp = self

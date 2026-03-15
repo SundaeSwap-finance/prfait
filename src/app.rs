@@ -1535,6 +1535,7 @@ impl App {
         let in_progress = self.analysis.in_progress.clone();
         let action_tx = self.action_tx.clone();
         let dampening_rules = self.config.effective_dampening();
+        let github_client = self.github_client.clone();
 
         tokio::spawn(async move {
             let key = (repo_name.clone(), pr_number);
@@ -1566,6 +1567,29 @@ impl App {
 
             in_progress.lock().await.insert(key.clone());
 
+            // Helper: run remote analysis using the merge-base (not branch tip)
+            // so we only see changes introduced by the PR, matching GitHub's diff.
+            let run_remote = |repo_name: String, pr: crate::github::PrData, action_tx: mpsc::UnboundedSender<Action>, github_client: Arc<GithubClient>| async move {
+                // Fetch merge-base so we compare the right commits
+                let base_ref = match github_client.get_merge_base(&repo_name, &pr.base_ref, &pr.head_sha).await {
+                    Ok(mb) => mb,
+                    Err(e) => {
+                        let _ = action_tx.send(Action::LoadError(format!(
+                            "{repo_name}#{}: merge-base fetch failed, using branch tip: {e}", pr.number
+                        )));
+                        pr.base_ref.clone()
+                    }
+                };
+                crate::analysis::analyze_remote_standalone(
+                    &repo_name,
+                    pr.number,
+                    &base_ref,
+                    &pr.head_sha,
+                    &pr.files,
+                )
+                .await
+            };
+
             let result = if let Some(ref local) = repo_config.local_path {
                 let local_result = crate::analysis::analyze_local_standalone(local, &pr.base_ref, &pr.head_ref).await;
                 match local_result {
@@ -1575,25 +1599,11 @@ impl App {
                         let _ = action_tx.send(Action::LoadError(format!(
                             "{repo_name}#{pr_number}: local analysis failed, trying remote: {e}"
                         )));
-                        crate::analysis::analyze_remote_standalone(
-                            &repo_name,
-                            pr_number,
-                            &pr.base_ref,
-                            &pr.head_sha,
-                            &pr.files,
-                        )
-                        .await
+                        run_remote(repo_name.clone(), pr, action_tx.clone(), github_client).await
                     }
                 }
             } else {
-                crate::analysis::analyze_remote_standalone(
-                    &repo_name,
-                    pr_number,
-                    &pr.base_ref,
-                    &pr.head_sha,
-                    &pr.files,
-                )
-                .await
+                run_remote(repo_name.clone(), pr, action_tx.clone(), github_client).await
             };
 
             in_progress.lock().await.remove(&key);
