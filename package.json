@@ -3,8 +3,15 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "prfait": "./cli.ts"
+  },
   "scripts": {
-    "dev": "bun dev.ts",
+    "dev": "bun cli.ts edit || bun cli.ts new",
+    "new": "bun cli.ts new",
+    "edit": "bun cli.ts edit",
+    "render": "bun cli.ts render",
+    "init": "bun cli.ts init",
     "build": "bunx --bun vite build web",
     "start": "NODE_ENV=production bun server/index.ts"
   },

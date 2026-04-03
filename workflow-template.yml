@@ -1,0 +1,18 @@
+name: prfait
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - '.prfait/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: SundaeSwap-finance/prfait/action@main

@@ -1,0 +1,52 @@
+name: 'prfait'
+description: 'Render a prfait PR story into the pull request description'
+inputs:
+  story-path:
+    description: 'Path to the story JSON file. If not provided, auto-detects from branch name.'
+    required: false
+runs:
+  using: 'composite'
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+
+    - name: Find story file
+      id: story
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.story-path }}" ]; then
+          STORY_PATH="${{ inputs.story-path }}"
+        else
+          BRANCH="${GITHUB_HEAD_REF}"
+          SAFE_BRANCH=$(echo "$BRANCH" | sed 's/[^a-zA-Z0-9._-]/_/g')
+          STORY_PATH=".prfait/${SAFE_BRANCH}.json"
+        fi
+        if [ -f "$STORY_PATH" ]; then
+          echo "path=$STORY_PATH" >> "$GITHUB_OUTPUT"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "Found story at $STORY_PATH"
+        else
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "No story found at $STORY_PATH"
+        fi
+
+    - name: Render story
+      if: steps.story.outputs.found == 'true'
+      shell: bash
+      run: |
+        cd "$GITHUB_ACTION_PATH/.."
+        bun install --frozen-lockfile 2>/dev/null || bun install
+        bun cli.ts render "$GITHUB_WORKSPACE/${{ steps.story.outputs.path }}" > /tmp/prfait-body.md
+        echo "Rendered story to markdown"
+
+    - name: Update PR description
+      if: steps.story.outputs.found == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh pr edit "${{ github.event.pull_request.number }}" \
+          --repo "${{ github.repository }}" \
+          --body-file /tmp/prfait-body.md
+        echo "Updated PR description"

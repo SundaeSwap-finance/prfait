@@ -4,48 +4,13 @@
     {
       "id": "p1",
       "kind": "narration",
-      "markdown": "# Test\n\n"
+      "markdown": "# Rewrite prfait as a PR authoring tool\n\nThe intention of prfait is to make it easier to review PRs in our new AI-based era.\n\nOriginally this focused on the *reading* side: how can we make it easier for engineers to do the act of code review. But this was ultimately not particularly useful. The semantic ranking was just inaccurate enough to be useless, it was slightly slow and buggy, etc.\n\nSo, this kind of rethinks the whole project from scratch.\n\nInstead, it focuses on the *authorship* of PRs, and as a byproduct, the *reading side* should become easier."
     },
     {
-      "id": "p3",
+      "id": "p2",
       "kind": "narration",
-      "markdown": "\\[link\\](https://google.com)\n\n**Test**\n\n```\nUncaught ReferenceError: useMemo is not defined\n    at useHighlightedLines (useHighlighter.ts:108:22)\n    at HighlightedFile (DiffViewer.tsx:152:23)\n```"
-    },
-    {
-      "id": "p4",
-      "kind": "snippet",
-      "file": "dev.ts",
-      "startLine": 7,
-      "endLine": 10,
-      "content": "+const vite = Bun.spawn([\"bunx\", \"--bun\", \"vite\", \"--config\", \"vite.config.ts\", \"--port\", \"3001\"], {\n+  stdout: \"inherit\",\n+  stderr: \"inherit\",\n+});",
-      "captureType": "lines"
-    },
-    {
-      "id": "p5",
-      "kind": "narration",
-      "markdown": ""
-    },
-    {
-      "id": "p6",
-      "kind": "snippet",
-      "file": "src/analysis.rs",
-      "startLine": 16,
-      "endLine": 24,
-      "content": "-impl AnalysisManager {\n-    pub fn new() -> Self {\n-        let cache = load_disk_cache();\n-        Self {\n-            cache: Arc::new(Mutex::new(cache)),\n-            in_progress: Arc::new(Mutex::new(std::collections::HashSet::new())),\n-        }\n-    }\n-}",
-      "originalContent": "-impl AnalysisManager {\n-    pub fn new() -> Self {\n-        let cache = load_disk_cache();\n-        Self {\n-            cache: Arc::new(Mutex::new(cache)),\n-            in_progress: Arc::new(Mutex::new(std::collections::HashSet::new())),\n-        }\n-    }\n-}",
-      "captureType": "lines",
-      "comments": [
-        {
-          "afterLine": 4,
-          "markdown": "This was my favorite line of code"
-        }
-      ]
-    },
-    {
-      "id": "p7",
-      "kind": "narration",
-      "markdown": ""
+      "markdown": "On a new project, you can `prfait init`, which will set up a new github action."
     }
   ],
-  "updatedAt": "2026-04-03T19:15:40.916Z"
+  "updatedAt": "2026-04-03T21:53:53.144Z"
 }
