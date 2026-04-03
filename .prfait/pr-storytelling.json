@@ -86,7 +86,62 @@
       "id": "p12",
       "kind": "narration",
       "markdown": "# Opening a PR\n\nThese files get saved as `.prfait/[branch-name].json`; when you open a pull request, the github action runs and updates your PR description with a markdown rendered version of your story.\n\nIn the future, this can also link to a hosted version of the editing UI, for better code reviews."
+    },
+    {
+      "id": "p15",
+      "kind": "narration",
+      "markdown": "# Updates\n\nSince the PR was opened, I added a few more updates;\n\nNow, we can map file extensions to languages"
+    },
+    {
+      "id": "p16",
+      "kind": "snippet",
+      "file": "cli.ts",
+      "startLine": 159,
+      "endLine": 172,
+      "content": "+const LANG_MAP: Record<string, string> = {\n+  ts: \"typescript\", tsx: \"tsx\", js: \"javascript\", jsx: \"jsx\",\n+  rs: \"rust\", py: \"python\", go: \"go\", rb: \"ruby\", java: \"java\",\n+  c: \"c\", h: \"c\", cpp: \"cpp\", cs: \"csharp\", sh: \"bash\",\n+  json: \"json\", yaml: \"yaml\", yml: \"yaml\", toml: \"toml\",\n+  md: \"markdown\", css: \"css\", scss: \"scss\", html: \"html\",\n+  sql: \"sql\", hs: \"haskell\", nix: \"nix\", ex: \"elixir\",\n+};\n+\n+function langFromFile(file: string): string {\n+  const ext = file.split(\".\").pop() ?? \"\";\n+  return LANG_MAP[ext] ?? ext;\n+}\n+",
+      "originalContent": "+const LANG_MAP: Record<string, string> = {\n+  ts: \"typescript\", tsx: \"tsx\", js: \"javascript\", jsx: \"jsx\",\n+  rs: \"rust\", py: \"python\", go: \"go\", rb: \"ruby\", java: \"java\",\n+  c: \"c\", h: \"c\", cpp: \"cpp\", cs: \"csharp\", sh: \"bash\",\n+  json: \"json\", yaml: \"yaml\", yml: \"yaml\", toml: \"toml\",\n+  md: \"markdown\", css: \"css\", scss: \"scss\", html: \"html\",\n+  sql: \"sql\", hs: \"haskell\", nix: \"nix\", ex: \"elixir\",\n+};\n+\n+function langFromFile(file: string): string {\n+  const ext = file.split(\".\").pop() ?? \"\";\n+  return LANG_MAP[ext] ?? ext;\n+}\n+",
+      "captureType": "lines"
+    },
+    {
+      "id": "p20",
+      "kind": "narration",
+      "markdown": "And use that to render the PR description with the appropriate language. We only use `diff` fencing if any lines were deleted."
+    },
+    {
+      "id": "p19",
+      "kind": "snippet",
+      "file": "cli.ts",
+      "startLine": 192,
+      "endLine": 196,
+      "content": "+      const lang = langFromFile(panel.file);\n+      const hasDeletions = panel.content.split(\"\\n\").some(\n+        (l) => l.startsWith(\"-\")\n+      );\n+",
+      "originalContent": "+      const lang = langFromFile(panel.file);\n+      const hasDeletions = panel.content.split(\"\\n\").some(\n+        (l) => l.startsWith(\"-\")\n+      );\n+",
+      "captureType": "lines"
+    },
+    {
+      "id": "p21",
+      "kind": "narration",
+      "markdown": "And finally, the terminal was breaking escape sequences, so arrow keys and backspace stopped working, so this seems to have fixed that:"
+    },
+    {
+      "id": "p17",
+      "kind": "snippet",
+      "file": "dev.ts",
+      "startLine": 6,
+      "endLine": 8,
+      "content": "+// Save terminal state before spawning anything\n+const savedStty = Bun.spawnSync([\"stty\", \"-g\"], { stdin: \"inherit\" }).stdout.toString().trim();\n+",
+      "originalContent": "+// Save terminal state before spawning anything\n+const savedStty = Bun.spawnSync([\"stty\", \"-g\"], { stdin: \"inherit\" }).stdout.toString().trim();\n+",
+      "captureType": "lines"
+    },
+    {
+      "id": "p18",
+      "kind": "snippet",
+      "file": "dev.ts",
+      "startLine": 38,
+      "endLine": 42,
+      "content": "-  // Reset terminal to sane state\n-  process.stdout.write(\"\\x1b[?1049l\\x1b[?25h\\x1bc\");\n+  // Restore terminal to saved state\n+  Bun.spawnSync([\"stty\", savedStty], { stdin: \"inherit\" });",
+      "originalContent": "-  // Reset terminal to sane state\n-  process.stdout.write(\"\\x1b[?1049l\\x1b[?25h\\x1bc\");\n+  // Restore terminal to saved state\n+  Bun.spawnSync([\"stty\", savedStty], { stdin: \"inherit\" });",
+      "captureType": "lines"
     }
   ],
-  "updatedAt": "2026-04-03T22:08:34.756Z"
+  "updatedAt": "2026-04-03T22:31:29.649Z"
 }
