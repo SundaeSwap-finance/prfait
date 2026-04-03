@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "summary": "# Rewrite prfait from scratch\n\nprfait is meant to be a tool that helps reduce the burden brought on by higher output from AI assisted coding.\n\nInitially, this focused on the *reading* side. Unfortunately, the impact scoring was just inaccurate enough to be useless, and it was just buggy and slow enough to deter usage.\n\nThis PR deletes that all, and instead focuses on the *authorship* of a PR.\n\nIf it becomes easy to write high quality PRs, guided by a human with understanding of the whole narrative, the hope is that this reduces the burden on the reviewer.",
+  "panels": [
+    {
+      "id": "p2",
+      "kind": "narration",
+      "markdown": "# Workflow\n\nYou begin by running `prfait init`, which places github action in your repo."
+    },
+    {
+      "id": "p3",
+      "kind": "snippet",
+      "file": "package.json",
+      "startLine": 14,
+      "endLine": 14,
+      "content": "+    \"init\": \"bun cli.ts init\",",
+      "originalContent": "+    \"init\": \"bun cli.ts init\",",
+      "captureType": "lines"
+    },
+    {
+      "id": "p4",
+      "kind": "snippet",
+      "file": "cli.ts",
+      "startLine": 104,
+      "endLine": 138,
+      "content": "+async function cmdInit() {\n+  const workflowDir = join(REPO_DIR, \".github\", \"workflows\");\n+  const workflowPath = join(workflowDir, \"prfait.yml\");\n+\n+  if (existsSync(workflowPath)) {\n+    console.log(\"prfait workflow already exists at .github/workflows/prfait.yml\");\n+    return;\n+  }\n+\n+  await $`mkdir -p ${workflowDir}`;\n+\n+  // Read the workflow template from prfait's own directory\n+  const templatePath = join(import.meta.dir, \"workflow-template.yml\");\n+  const workflow = await Bun.file(templatePath).text();\n+\n+  await Bun.write(workflowPath, workflow);\n+  console.log(\"Created .github/workflows/prfait.yml\");\n+\n+  // Create .prfait directory\n+  const prfaitDir = join(REPO_DIR, \".prfait\");\n+  if (!existsSync(prfaitDir)) {\n+    await $`mkdir -p ${prfaitDir}`;\n+    await Bun.write(join(prfaitDir, \".gitkeep\"), \"\");\n+    console.log(\"Created .prfait/ directory\");\n+  }\n+\n+  console.log(\"\\nSetup complete! Workflow:\");\n+  console.log(\"  1. Run 'prfait new' to craft your PR story\");\n+  console.log(\"  2. Commit the .prfait/ directory with your branch\");\n+  console.log(\"  3. Push — the GitHub Action will render your story into the PR description\");\n+  console.log(\"\\nNote: The action needs permission to update PR descriptions.\");\n+  console.log(\"  The workflow requests 'pull-requests: write' which works with the default\");\n+  console.log(\"  GITHUB_TOKEN. If your org restricts default token permissions, ensure\");\n+  console.log(\"  'pull-requests: write' is allowed under Settings → Actions → General.\");\n+}",
+      "originalContent": "+async function cmdInit() {\n+  const workflowDir = join(REPO_DIR, \".github\", \"workflows\");\n+  const workflowPath = join(workflowDir, \"prfait.yml\");\n+\n+  if (existsSync(workflowPath)) {\n+    console.log(\"prfait workflow already exists at .github/workflows/prfait.yml\");\n+    return;\n+  }\n+\n+  await $`mkdir -p ${workflowDir}`;\n+\n+  // Read the workflow template from prfait's own directory\n+  const templatePath = join(import.meta.dir, \"workflow-template.yml\");\n+  const workflow = await Bun.file(templatePath).text();\n+\n+  await Bun.write(workflowPath, workflow);\n+  console.log(\"Created .github/workflows/prfait.yml\");\n+\n+  // Create .prfait directory\n+  const prfaitDir = join(REPO_DIR, \".prfait\");\n+  if (!existsSync(prfaitDir)) {\n+    await $`mkdir -p ${prfaitDir}`;\n+    await Bun.write(join(prfaitDir, \".gitkeep\"), \"\");\n+    console.log(\"Created .prfait/ directory\");\n+  }\n+\n+  console.log(\"\\nSetup complete! Workflow:\");\n+  console.log(\"  1. Run 'prfait new' to craft your PR story\");\n+  console.log(\"  2. Commit the .prfait/ directory with your branch\");\n+  console.log(\"  3. Push — the GitHub Action will render your story into the PR description\");\n+  console.log(\"\\nNote: The action needs permission to update PR descriptions.\");\n+  console.log(\"  The workflow requests 'pull-requests: write' which works with the default\");\n+  console.log(\"  GITHUB_TOKEN. If your org restricts default token permissions, ensure\");",
+      "captureType": "lines"
+    },
+    {
+      "id": "p7",
+      "kind": "narration",
+      "markdown": "Then, each time you create a branch and want to open a PR, you can run `prfait new` (or `prfait new [branch]` to use a different comparison target)."
+    },
+    {
+      "id": "p8",
+      "kind": "snippet",
+      "file": "cli.ts",
+      "startLine": 56,
+      "endLine": 73,
+      "content": "+async function cmdNew() {\n+  const base = args[1] ?? \"main\";\n+  const storyPath = await getStoryPath();\n+\n+  if (existsSync(storyPath)) {\n+    const ok = await confirm(\n+      \"A story already exists for this branch. This will wipe out the existing draft. Are you sure?\"\n+    );\n+    if (!ok) {\n+      console.log(\"Aborted.\");\n+      process.exit(0);\n+    }\n+    // Clear the existing story\n+    const { mkdir } = await import(\"fs/promises\");\n+    await mkdir(join(REPO_DIR, \".prfait\"), { recursive: true });\n+    await Bun.write(storyPath, JSON.stringify({ version: 1, panels: [], updatedAt: new Date().toISOString() }, null, 2));\n+    console.log(\"Cleared existing story.\");\n+  }",
+      "originalContent": "+async function cmdNew() {\n+  const base = args[1] ?? \"main\";\n+  const storyPath = await getStoryPath();\n+\n+  if (existsSync(storyPath)) {\n+    const ok = await confirm(\n+      \"A story already exists for this branch. This will wipe out the existing draft. Are you sure?\"\n+    );\n+    if (!ok) {\n+      console.log(\"Aborted.\");\n+      process.exit(0);\n+    }\n+    // Clear the existing story",
+      "captureType": "lines"
+    },
+    {
+      "id": "p9",
+      "kind": "narration",
+      "markdown": "This starts a small local tool, and opens an editing experience in your browser.\n\nThink of this like literate programming, or a workbook like Jupiter. You can write an explanation of your PR, and easily grab snippets of code, like this one:"
+    },
+    {
+      "id": "p10",
+      "kind": "snippet",
+      "file": "src/components/DiffViewer.tsx b/web/src/components/DiffViewer.tsx",
+      "startLine": 239,
+      "endLine": 253,
+      "content": "+  function addTextSelection() {\n+    const sel = window.getSelection();\n+    if (!sel || sel.isCollapsed) return;\n+    const text = sel.toString();\n+    if (!text.trim()) return;\n+    onAddSnippet({\n+      file: file.file,\n+      startLine: 0,\n+      endLine: 0,\n+      content: text,\n+      type: \"text\",\n+    });\n+    sel.removeAllRanges();\n+    setTextSelPos(null);\n+  }",
+      "originalContent": "+  function addTextSelection() {\n+    const sel = window.getSelection();\n+    if (!sel || sel.isCollapsed) return;\n+    const text = sel.toString();\n+    if (!text.trim()) return;\n+    onAddSnippet({\n+      file: file.file,\n+      startLine: 0,\n+      endLine: 0,\n+      content: text,\n+      type: \"text\",\n+    });\n+    sel.removeAllRanges();\n+    setTextSelPos(null);\n+  }",
+      "captureType": "lines"
+    },
+    {
+      "id": "p11",
+      "kind": "narration",
+      "markdown": "which handles adding specific selected text snippets into a storyboard.\n\nThis story then provides a narrative for the PR. The author can focus the reviewers attention on the right areas, making it easier to understand **The Point.**\n\nIn the future, these snippets might include images, diagrams, or even be interactive."
+    },
+    {
+      "id": "p14",
+      "kind": "snippet",
+      "file": "src/components/StoryEditor.tsx b/web/src/components/StoryEditor.tsx",
+      "startLine": 261,
+      "endLine": 288,
+      "content": "+function InlineComment({\n+  comment,\n+  onChange,\n+  onRemove,\n+  autoFocus,\n+}: {\n+  comment: string;\n+  onChange: (markdown: string) => void;\n+  onRemove: () => void;\n+  autoFocus: boolean;\n+}) {\n+  return (\n+    <div className=\"snippet-inline-comment\">\n+      <div className=\"snippet-inline-comment-bar\" />\n+      <div className=\"snippet-inline-comment-body\">\n+        <MarkdownEditor\n+          value={comment}\n+          onChange={onChange}\n+          placeholder=\"Add a comment...\"\n+          autoFocus={autoFocus}\n+        />\n+        {comment === \"\" && (\n+          <button className=\"snippet-inline-comment-remove\" onClick={onRemove}>×</button>\n+        )}\n+      </div>\n+    </div>\n+  );\n+}",
+      "originalContent": "+function InlineComment({\n+  comment,\n+  onChange,\n+  onRemove,\n+  autoFocus,\n+}: {\n+  comment: string;\n+  onChange: (markdown: string) => void;\n+  onRemove: () => void;\n+  autoFocus: boolean;\n+}) {\n+  return (\n+    <div className=\"snippet-inline-comment\">\n+      <div className=\"snippet-inline-comment-bar\" />\n+      <div className=\"snippet-inline-comment-body\">\n+        <MarkdownEditor\n+          value={comment}\n+          onChange={onChange}\n+          placeholder=\"Add a comment...\"\n+          autoFocus={autoFocus}\n+        />\n+        {comment === \"\" && (\n+          <button className=\"snippet-inline-comment-remove\" onClick={onRemove}>×</button>\n+        )}\n+      </div>\n+    </div>\n+  );\n+}",
+      "captureType": "lines",
+      "comments": [
+        {
+          "afterLine": 0,
+          "markdown": "I can even leave inline comments on the code, letting me seamlessly transition from prose-first to code-first communication styles."
+        }
+      ]
+    },
+    {
+      "id": "p12",
+      "kind": "narration",
+      "markdown": "# Opening a PR\n\nThese files get saved as `.prfait/[branch-name].json`; when you open a pull request, the github action runs and updates your PR description with a markdown rendered version of your story.\n\nIn the future, this can also link to a hosted version of the editing UI, for better code reviews."
+    },
+    {
+      "id": "p15",
+      "kind": "narration",
+      "markdown": "# Updates\n\nSince the PR was opened, I added a few more updates;\n\nNow, we can map file extensions to languages"
+    },
+    {
+      "id": "p16",
+      "kind": "snippet",
+      "file": "cli.ts",
+      "startLine": 159,
+      "endLine": 172,
+      "content": "+const LANG_MAP: Record<string, string> = {\n+  ts: \"typescript\", tsx: \"tsx\", js: \"javascript\", jsx: \"jsx\",\n+  rs: \"rust\", py: \"python\", go: \"go\", rb: \"ruby\", java: \"java\",\n+  c: \"c\", h: \"c\", cpp: \"cpp\", cs: \"csharp\", sh: \"bash\",\n+  json: \"json\", yaml: \"yaml\", yml: \"yaml\", toml: \"toml\",\n+  md: \"markdown\", css: \"css\", scss: \"scss\", html: \"html\",\n+  sql: \"sql\", hs: \"haskell\", nix: \"nix\", ex: \"elixir\",\n+};\n+\n+function langFromFile(file: string): string {\n+  const ext = file.split(\".\").pop() ?? \"\";\n+  return LANG_MAP[ext] ?? ext;\n+}\n+",
+      "originalContent": "+const LANG_MAP: Record<string, string> = {\n+  ts: \"typescript\", tsx: \"tsx\", js: \"javascript\", jsx: \"jsx\",\n+  rs: \"rust\", py: \"python\", go: \"go\", rb: \"ruby\", java: \"java\",\n+  c: \"c\", h: \"c\", cpp: \"cpp\", cs: \"csharp\", sh: \"bash\",\n+  json: \"json\", yaml: \"yaml\", yml: \"yaml\", toml: \"toml\",\n+  md: \"markdown\", css: \"css\", scss: \"scss\", html: \"html\",\n+  sql: \"sql\", hs: \"haskell\", nix: \"nix\", ex: \"elixir\",\n+};\n+\n+function langFromFile(file: string): string {\n+  const ext = file.split(\".\").pop() ?? \"\";\n+  return LANG_MAP[ext] ?? ext;\n+}\n+",
+      "captureType": "lines"
+    },
+    {
+      "id": "p20",
+      "kind": "narration",
+      "markdown": "And use that to render the PR description with the appropriate language. We only use `diff` fencing if any lines were deleted."
+    },
+    {
+      "id": "p19",
+      "kind": "snippet",
+      "file": "cli.ts",
+      "startLine": 192,
+      "endLine": 196,
+      "content": "+      const lang = langFromFile(panel.file);\n+      const hasDeletions = panel.content.split(\"\\n\").some(\n+        (l) => l.startsWith(\"-\")\n+      );\n+",
+      "originalContent": "+      const lang = langFromFile(panel.file);\n+      const hasDeletions = panel.content.split(\"\\n\").some(\n+        (l) => l.startsWith(\"-\")\n+      );\n+",
+      "captureType": "lines"
+    },
+    {
+      "id": "p21",
+      "kind": "narration",
+      "markdown": "And finally, the terminal was breaking escape sequences, so arrow keys and backspace stopped working, so this seems to have fixed that:"
+    },
+    {
+      "id": "p17",
+      "kind": "snippet",
+      "file": "dev.ts",
+      "startLine": 6,
+      "endLine": 8,
+      "content": "+// Save terminal state before spawning anything\n+const savedStty = Bun.spawnSync([\"stty\", \"-g\"], { stdin: \"inherit\" }).stdout.toString().trim();\n+",
+      "originalContent": "+// Save terminal state before spawning anything\n+const savedStty = Bun.spawnSync([\"stty\", \"-g\"], { stdin: \"inherit\" }).stdout.toString().trim();\n+",
+      "captureType": "lines"
+    },
+    {
+      "id": "p18",
+      "kind": "snippet",
+      "file": "dev.ts",
+      "startLine": 38,
+      "endLine": 42,
+      "content": "-  // Reset terminal to sane state\n-  process.stdout.write(\"\\x1b[?1049l\\x1b[?25h\\x1bc\");\n+  // Restore terminal to saved state\n+  Bun.spawnSync([\"stty\", savedStty], { stdin: \"inherit\" });",
+      "originalContent": "-  // Reset terminal to sane state\n-  process.stdout.write(\"\\x1b[?1049l\\x1b[?25h\\x1bc\");\n+  // Restore terminal to saved state\n+  Bun.spawnSync([\"stty\", savedStty], { stdin: \"inherit\" });",
+      "captureType": "lines"
+    }
+  ],
+  "updatedAt": "2026-04-03T23:20:13.448Z"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "prfait",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "prfait": "./cli.ts"
+  },
+  "scripts": {
+    "dev": "bun cli.ts edit || bun cli.ts new",
+    "new": "bun cli.ts new",
+    "edit": "bun cli.ts edit",
+    "render": "bun cli.ts render",
+    "init": "bun cli.ts init",
+    "build": "bunx --bun vite build web",
+    "start": "NODE_ENV=production bun server/index.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@tiptap/extension-placeholder": "^3.22.1",
+    "@tiptap/react": "^3.22.1",
+    "@tiptap/starter-kit": "^3.22.1",
+    "hono": "^4.7.0",
+    "shiki": "^4.0.2",
+    "tiptap-markdown": "^0.9.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "@vitejs/plugin-react-oxc": "^0.4.3",
+    "diff2html": "^3.4.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.0.3"
+  }
+}
