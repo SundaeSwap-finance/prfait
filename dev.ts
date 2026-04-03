@@ -3,6 +3,9 @@
 
 import { $ } from "bun";
 
+// Save terminal state before spawning anything
+const savedStty = Bun.spawnSync(["stty", "-g"], { stdin: "inherit" }).stdout.toString().trim();
+
 // Start Vite (port 3001) — this is the URL you visit
 const vite = Bun.spawn(["bunx", "--bun", "vite", "--config", "vite.config.ts", "--port", "3001"], {
   stdout: "inherit",
@@ -35,8 +38,8 @@ async function cleanup() {
   vite.kill();
   server.kill();
   await Promise.allSettled([vite.exited, server.exited]);
-  // Reset terminal to sane state
-  process.stdout.write("\x1b[?1049l\x1b[?25h\x1bc");
+  // Restore terminal to saved state
+  Bun.spawnSync(["stty", savedStty], { stdin: "inherit" });
   process.exit(0);
 }
 

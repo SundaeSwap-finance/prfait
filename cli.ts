@@ -156,6 +156,20 @@ type Panel = {
   markdown: string;
 };
 
+const LANG_MAP: Record<string, string> = {
+  ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
+  rs: "rust", py: "python", go: "go", rb: "ruby", java: "java",
+  c: "c", h: "c", cpp: "cpp", cs: "csharp", sh: "bash",
+  json: "json", yaml: "yaml", yml: "yaml", toml: "toml",
+  md: "markdown", css: "css", scss: "scss", html: "html",
+  sql: "sql", hs: "haskell", nix: "nix", ex: "elixir",
+};
+
+function langFromFile(file: string): string {
+  const ext = file.split(".").pop() ?? "";
+  return LANG_MAP[ext] ?? ext;
+}
+
 function renderStoryToMarkdown(story: StoryDocument): string {
   const parts: string[] = [];
 
@@ -175,6 +189,11 @@ function renderStoryToMarkdown(story: StoryDocument): string {
             : `:${panel.startLine}-${panel.endLine}`
           : "";
 
+      const lang = langFromFile(panel.file);
+      const hasDeletions = panel.content.split("\n").some(
+        (l) => l.startsWith("-")
+      );
+
       // File header
       parts.push(`**\`${panel.file}${lineRange}\`**`);
 
@@ -190,10 +209,18 @@ function renderStoryToMarkdown(story: StoryDocument): string {
       let codeBuffer: string[] = [];
 
       function flushCode() {
-        if (codeBuffer.length > 0) {
+        if (codeBuffer.length === 0) return;
+        if (hasDeletions) {
+          // Has removals — use diff fence for red/green coloring
           parts.push("```diff\n" + codeBuffer.join("\n") + "\n```");
-          codeBuffer = [];
+        } else {
+          // All additions or context — use language fence, strip prefixes
+          const stripped = codeBuffer.map((l) =>
+            l.startsWith("+") || l.startsWith(" ") ? l.slice(1) : l
+          );
+          parts.push("```" + lang + "\n" + stripped.join("\n") + "\n```");
         }
+        codeBuffer = [];
       }
 
       for (let i = 0; i < lines.length; i++) {
