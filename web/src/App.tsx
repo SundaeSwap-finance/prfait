@@ -36,6 +36,8 @@ export default function App() {
   const diffLoading = selectedCommit ? commitDiffLoading : fileDiffLoading;
 
   const {
+    summary,
+    setSummary,
     panels,
     addSnippet,
     addSnippetAt,
@@ -135,6 +137,8 @@ export default function App() {
       {view === "story" ? (
         <div className="main story-view">
           <StoryEditor
+            summary={summary}
+            onUpdateSummary={setSummary}
             panels={panels}
             files={files}
             onAddNarration={addNarration}

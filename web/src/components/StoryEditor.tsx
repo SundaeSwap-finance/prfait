@@ -6,6 +6,8 @@ import MarkdownEditor from "./MarkdownEditor";
 import { fetchParsedDiffLines, type DiffLineEntry } from "../hooks/useApi";
 
 interface StoryEditorProps {
+  summary: string;
+  onUpdateSummary: (markdown: string) => void;
   panels: Panel[];
   files: ChangedFile[];
   onAddNarration: (atIndex: number) => string;
@@ -597,6 +599,8 @@ function GapZone({ onClick, isFirst }: { onClick: () => void; isFirst?: boolean 
 // ── Main StoryEditor ────────────────────────────────────────────────
 
 export default function StoryEditor({
+  summary,
+  onUpdateSummary,
   panels,
   files,
   onAddNarration,
@@ -617,7 +621,6 @@ export default function StoryEditor({
   }
 
   function handleCanvasClick(e: React.MouseEvent<HTMLDivElement>) {
-    // Only trigger if clicking the canvas itself (empty space), not a child
     if (e.target === e.currentTarget) {
       insertNarration(panels.length);
     }
@@ -626,6 +629,24 @@ export default function StoryEditor({
   return (
     <div className="story-editor">
       <div className="story-editor-canvas" onClick={handleCanvasClick}>
+        {/* Summary — renders into the PR description */}
+        <div className="story-summary">
+          <div className="story-summary-label">PR Summary</div>
+          <div className="story-summary-hint">
+            This appears in the PR description. The walkthrough below links from it.
+          </div>
+          <MarkdownEditor
+            value={summary}
+            onChange={onUpdateSummary}
+            placeholder="What does this PR do, and why? What's notable about the approach?"
+          />
+        </div>
+
+        <div className="story-walkthrough-label">
+          Walkthrough
+          <span className="story-walkthrough-hint">Detailed context for reviewers — hosted on the prfait viewer</span>
+        </div>
+
         {panels.length === 0 && (
           <div className="story-empty" onClick={() => insertNarration(0)}>
             <p>Click to start writing, or grab snippets from the diff view.</p>

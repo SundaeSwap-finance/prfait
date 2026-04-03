@@ -502,6 +502,58 @@ body {
   min-height: 0;
 }
 
+/* Summary section */
+.story-summary {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.story-summary-label {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.story-summary-hint {
+  padding: 6px 12px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.story-summary .markdown-editor .tiptap {
+  padding: 10px 12px;
+  min-height: 60px;
+}
+
+/* Walkthrough label */
+.story-walkthrough-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.story-walkthrough-hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 .story-empty {
   display: flex;
   flex-direction: column;

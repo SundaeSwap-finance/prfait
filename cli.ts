@@ -141,6 +141,7 @@ async function cmdInit() {
 
 interface StoryDocument {
   version: number;
+  summary?: string;
   panels: Panel[];
 }
 
@@ -173,74 +174,20 @@ function langFromFile(file: string): string {
 function renderStoryToMarkdown(story: StoryDocument): string {
   const parts: string[] = [];
 
-  // Header with link to viewer (placeholder URL for now)
-  parts.push(`<!-- Rendered by prfait -->\n`);
+  parts.push(`<!-- Rendered by prfait -->`);
 
-  for (const panel of story.panels) {
-    if (panel.kind === "narration") {
-      if (panel.markdown.trim()) {
-        parts.push(panel.markdown.trim());
-      }
-    } else if (panel.kind === "snippet") {
-      const lineRange =
-        panel.startLine > 0
-          ? panel.startLine === panel.endLine
-            ? `:${panel.startLine}`
-            : `:${panel.startLine}-${panel.endLine}`
-          : "";
-
-      const lang = langFromFile(panel.file);
-      const hasDeletions = panel.content.split("\n").some(
-        (l) => l.startsWith("-")
-      );
-
-      // File header
-      parts.push(`**\`${panel.file}${lineRange}\`**`);
-
-      // Split content into segments separated by comments
-      const lines = panel.content.split("\n");
-      const commentMap = new Map<number, string>();
-      if (panel.comments) {
-        for (const c of panel.comments) {
-          commentMap.set(c.afterLine, c.markdown);
-        }
-      }
-
-      let codeBuffer: string[] = [];
-
-      function flushCode() {
-        if (codeBuffer.length === 0) return;
-        if (hasDeletions) {
-          // Has removals — use diff fence for red/green coloring
-          parts.push("```diff\n" + codeBuffer.join("\n") + "\n```");
-        } else {
-          // All additions or context — use language fence, strip prefixes
-          const stripped = codeBuffer.map((l) =>
-            l.startsWith("+") || l.startsWith(" ") ? l.slice(1) : l
-          );
-          parts.push("```" + lang + "\n" + stripped.join("\n") + "\n```");
-        }
-        codeBuffer = [];
-      }
-
-      for (let i = 0; i < lines.length; i++) {
-        codeBuffer.push(lines[i]);
-
-        const comment = commentMap.get(i);
-        if (comment) {
-          flushCode();
-          // Render comment as a blockquote so it's visually distinct
-          const quoted = comment
-            .split("\n")
-            .map((l) => `> ${l}`)
-            .join("\n");
-          parts.push(quoted);
-        }
-      }
-
-      flushCode();
-    }
+  // Summary — this is the main PR description content
+  if (story.summary?.trim()) {
+    parts.push(story.summary.trim());
   }
+
+  // If there's a walkthrough, add a link to the viewer
+  if (story.panels.length > 0) {
+    // TODO: replace with actual viewer URL once hosted
+    parts.push(`---\n\n> **[View the full PR walkthrough →](#)**\n>\n> *${story.panels.length} sections with annotated code, inline comments, and context*`);
+  }
+
+  parts.push(`\n<sub>Generated with [prfait](https://github.com/SundaeSwap-finance/prfait)</sub>`);
 
   return parts.join("\n\n");
 }

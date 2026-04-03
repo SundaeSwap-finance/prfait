@@ -1,11 +1,7 @@
 {
   "version": 1,
+  "summary": "# Rewrite prfait from scratch\n\nprfait is meant to be a tool that helps reduce the burden brought on by higher output from AI assisted coding.\n\nInitially, this focused on the *reading* side. Unfortunately, the impact scoring was just inaccurate enough to be useless, and it was just buggy and slow enough to deter usage.\n\nThis PR deletes that all, and instead focuses on the *authorship* of a PR.\n\nIf it becomes easy to write high quality PRs, guided by a human with understanding of the whole narrative, the hope is that this reduces the burden on the reviewer.",
   "panels": [
-    {
-      "id": "p1",
-      "kind": "narration",
-      "markdown": "# Rewrite prfait from scratch\n\nprfait is meant to be a tool that helps reduce the burden brought on by higher output from AI assisted coding.\n\nInitially, this focused on the *reading* side. Unfortunately, the impact scoring was just inaccurate enough to be useless, and it was just buggy and slow enough to deter usage.\n\nThis PR deletes that all, and instead focuses on the *authorship* of a PR.\n\nIf it becomes easy to write high quality PRs, guided by a human with understanding of the whole narrative, the hope is that this reduces the burden on the reviewer."
-    },
     {
       "id": "p2",
       "kind": "narration",
@@ -143,5 +139,5 @@
       "captureType": "lines"
     }
   ],
-  "updatedAt": "2026-04-03T22:31:29.649Z"
+  "updatedAt": "2026-04-03T23:20:13.448Z"
 }

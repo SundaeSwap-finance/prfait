@@ -38,6 +38,7 @@ export interface Snippet {
 /** The shape we persist to disk */
 interface StoryDocument {
   version: 1;
+  summary: string;
   panels: Panel[];
   updatedAt: string;
 }
@@ -57,21 +58,22 @@ function syncIdCounter(panels: Panel[]) {
   }
 }
 
-async function loadStory(): Promise<Panel[]> {
+async function loadStory(): Promise<{ summary: string; panels: Panel[] }> {
   try {
     const res = await fetch("/api/story");
     const data: StoryDocument | null = await res.json();
-    if (data?.panels?.length) {
-      syncIdCounter(data.panels);
-      return data.panels;
+    if (data) {
+      if (data.panels?.length) syncIdCounter(data.panels);
+      return { summary: data.summary ?? "", panels: data.panels ?? [] };
     }
   } catch { /* no saved story */ }
-  return [];
+  return { summary: "", panels: [] };
 }
 
-async function saveStory(panels: Panel[]) {
+async function saveStory(summary: string, panels: Panel[]) {
   const doc: StoryDocument = {
     version: 1,
+    summary,
     panels,
     updatedAt: new Date().toISOString(),
   };
@@ -83,12 +85,14 @@ async function saveStory(panels: Panel[]) {
 }
 
 export function useStory() {
+  const [summary, setSummary] = useState("");
   const [panels, setPanels] = useState<Panel[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   // Load on mount
   useEffect(() => {
-    loadStory().then((p) => {
+    loadStory().then(({ summary: s, panels: p }) => {
+      setSummary(s);
       setPanels(p);
       setLoaded(true);
     });
@@ -97,15 +101,15 @@ export function useStory() {
   // Auto-save with debounce
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!loaded) return; // don't save before initial load
+    if (!loaded) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      saveStory(panels);
+      saveStory(summary, panels);
     }, 500);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [panels, loaded]);
+  }, [summary, panels, loaded]);
 
   const addSnippet = useCallback(
     (snippet: Omit<Snippet, "id">) => {
@@ -230,6 +234,8 @@ export function useStory() {
   );
 
   return {
+    summary,
+    setSummary,
     panels,
     loaded,
     addSnippet,
