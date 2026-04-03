@@ -6,8 +6,10 @@ import {
   useFileDiff,
   useCommitDiff,
 } from "./hooks/useApi";
+import { useStory } from "./hooks/useStory";
 import FileTree from "./components/FileTree";
 import DiffViewer from "./components/DiffViewer";
+import SnippetTray from "./components/SnippetTray";
 
 export default function App() {
   const meta = useMeta();
@@ -24,6 +26,8 @@ export default function App() {
   const activeDiff = selectedCommit ? commitDiff : fileDiff;
   const diffLoading = selectedCommit ? commitDiffLoading : fileDiffLoading;
 
+  const { snippets, addSnippet, removeSnippet } = useStory();
+
   return (
     <div className="app">
       <header className="header">
@@ -33,6 +37,11 @@ export default function App() {
             <span className="branch">{meta.branch}</span>
             <span className="base">vs {meta.base}</span>
           </>
+        )}
+        {snippets.length > 0 && (
+          <span className="snippet-count">
+            {snippets.length} snippet{snippets.length !== 1 ? "s" : ""}
+          </span>
         )}
       </header>
 
@@ -59,7 +68,12 @@ export default function App() {
           loading={diffLoading}
           filePath={selectedFile}
           commitHash={selectedCommit}
+          onAddSnippet={addSnippet}
         />
+
+        {snippets.length > 0 && (
+          <SnippetTray snippets={snippets} onRemove={removeSnippet} />
+        )}
       </div>
     </div>
   );
