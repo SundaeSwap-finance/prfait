@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createHighlighter, type Highlighter } from "shiki";
 
 const LANG_MAP: Record<string, string> = {
@@ -39,16 +39,24 @@ function langFromPath(path: string): string {
 
 // Singleton highlighter — created once, languages loaded on demand
 let highlighterPromise: Promise<Highlighter> | null = null;
+let highlighterInstance: Highlighter | null = null;
 const loadedLangs = new Set<string>();
 
 async function getHighlighter(): Promise<Highlighter> {
+  if (highlighterInstance) return highlighterInstance;
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
       themes: ["github-dark-default"],
       langs: [],
     });
   }
-  return highlighterPromise;
+  highlighterInstance = await highlighterPromise;
+  return highlighterInstance;
+}
+
+/** Synchronous access — returns null if not ready yet */
+function getHighlighterSync(): Highlighter | null {
+  return highlighterInstance;
 }
 
 async function ensureLang(
@@ -70,15 +78,48 @@ export interface HighlightedLine {
   tokens: { content: string; color?: string }[];
 }
 
+function highlightSync(
+  code: string,
+  filePath: string
+): HighlightedLine[] | null {
+  const h = getHighlighterSync();
+  if (!h) return null;
+  const lang = langFromPath(filePath);
+  if (!lang || !loadedLangs.has(lang)) return null;
+
+  const tokens = h.codeToTokens(code, {
+    lang,
+    theme: "github-dark-default",
+  });
+
+  return tokens.tokens.map((lineTokens) => ({
+    tokens: lineTokens.map((t) => ({
+      content: t.content,
+      color: t.color,
+    })),
+  }));
+}
+
 export function useHighlightedLines(
   code: string,
   filePath: string
 ): HighlightedLine[] | null {
-  const [result, setResult] = useState<HighlightedLine[] | null>(null);
+  // Try synchronous first — instant results if language already loaded
+  const syncResult = useMemo(
+    () => highlightSync(code, filePath),
+    [code, filePath]
+  );
+
+  const [asyncResult, setAsyncResult] = useState<{
+    code: string;
+    lines: HighlightedLine[];
+  } | null>(null);
 
   useEffect(() => {
+    // If sync worked, no need for async
+    if (syncResult) return;
     if (!code || !filePath) {
-      setResult(null);
+      setAsyncResult(null);
       return;
     }
 
@@ -97,20 +138,23 @@ export function useHighlightedLines(
 
       if (cancelled) return;
 
-      setResult(
-        tokens.tokens.map((lineTokens) => ({
+      setAsyncResult({
+        code,
+        lines: tokens.tokens.map((lineTokens) => ({
           tokens: lineTokens.map((t) => ({
             content: t.content,
             color: t.color,
           })),
-        }))
-      );
+        })),
+      });
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [code, filePath]);
+  }, [code, filePath, syncResult]);
 
-  return result;
+  if (syncResult) return syncResult;
+  if (asyncResult && asyncResult.code === code) return asyncResult.lines;
+  return null;
 }

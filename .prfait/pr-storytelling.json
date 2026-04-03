@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "panels": [
+    {
+      "id": "p1",
+      "kind": "narration",
+      "markdown": "# Test\n\n"
+    },
+    {
+      "id": "p3",
+      "kind": "narration",
+      "markdown": "\\[link\\](https://google.com)\n\n**Test**\n\n```\nUncaught ReferenceError: useMemo is not defined\n    at useHighlightedLines (useHighlighter.ts:108:22)\n    at HighlightedFile (DiffViewer.tsx:152:23)\n```"
+    },
+    {
+      "id": "p4",
+      "kind": "snippet",
+      "file": "dev.ts",
+      "startLine": 7,
+      "endLine": 10,
+      "content": "+const vite = Bun.spawn([\"bunx\", \"--bun\", \"vite\", \"--config\", \"vite.config.ts\", \"--port\", \"3001\"], {\n+  stdout: \"inherit\",\n+  stderr: \"inherit\",\n+});",
+      "captureType": "lines"
+    },
+    {
+      "id": "p5",
+      "kind": "narration",
+      "markdown": ""
+    },
+    {
+      "id": "p6",
+      "kind": "snippet",
+      "file": "src/analysis.rs",
+      "startLine": 16,
+      "endLine": 24,
+      "content": "-impl AnalysisManager {\n-    pub fn new() -> Self {\n-        let cache = load_disk_cache();\n-        Self {\n-            cache: Arc::new(Mutex::new(cache)),\n-            in_progress: Arc::new(Mutex::new(std::collections::HashSet::new())),\n-        }\n-    }\n-}",
+      "originalContent": "-impl AnalysisManager {\n-    pub fn new() -> Self {\n-        let cache = load_disk_cache();\n-        Self {\n-            cache: Arc::new(Mutex::new(cache)),\n-            in_progress: Arc::new(Mutex::new(std::collections::HashSet::new())),\n-        }\n-    }\n-}",
+      "captureType": "lines",
+      "comments": [
+        {
+          "afterLine": 4,
+          "markdown": "This was my favorite line of code"
+        }
+      ]
+    },
+    {
+      "id": "p7",
+      "kind": "narration",
+      "markdown": ""
+    }
+  ],
+  "updatedAt": "2026-04-03T19:15:40.916Z"
+}

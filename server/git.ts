@@ -146,6 +146,28 @@ export async function getFileContent(
   return { path, content, language: langFromPath(path) };
 }
 
+export async function getFileLines(
+  cwd: string,
+  ref: string,
+  path: string,
+  start: number,
+  end: number
+): Promise<string[]> {
+  const content = await $`git -C ${cwd} show ${ref}:${path}`.text();
+  const lines = content.split("\n");
+  // 1-indexed, inclusive
+  return lines.slice(Math.max(0, start - 1), end);
+}
+
+export async function getFileLineCount(
+  cwd: string,
+  ref: string,
+  path: string
+): Promise<number> {
+  const content = await $`git -C ${cwd} show ${ref}:${path}`.text();
+  return content.split("\n").length;
+}
+
 export async function getCommits(
   cwd: string,
   base: string

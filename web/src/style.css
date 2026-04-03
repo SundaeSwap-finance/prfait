@@ -81,6 +81,39 @@ body {
   letter-spacing: 0.05em;
 }
 
+/* View toggle */
+.view-toggle {
+  display: flex;
+  gap: 0;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-toggle-btn {
+  all: unset;
+  padding: 3px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background 0.1s, color 0.1s;
+}
+
+.view-toggle-btn:hover {
+  background: var(--bg-hover);
+}
+
+.view-toggle-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.view-toggle-btn + .view-toggle-btn {
+  border-left: 1px solid var(--border);
+}
+
 .header .branch {
   font-family: var(--font-mono);
   font-size: 13px;
@@ -435,8 +468,8 @@ body {
   font-size: 18px;
 }
 
-/* Snippet count in header */
-.snippet-count {
+/* Panel count in header */
+.panel-count {
   font-size: 12px;
   color: var(--green);
   background: rgba(63, 185, 80, 0.15);
@@ -445,44 +478,243 @@ body {
   margin-left: auto;
 }
 
-/* Snippet tray */
-.snippet-tray {
-  width: 280px;
-  min-width: 280px;
-  border-left: 1px solid var(--border);
-  background: var(--bg-raised);
+/* ── Story Editor ─────────────────────────────────────────────────── */
+
+/* Story view takes full width */
+.story-view {
+  justify-content: center;
+}
+
+.story-editor {
+  flex: 1;
+  max-width: 800px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.snippet-tray-header {
-  padding: 8px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-}
-
-.snippet-tray-list {
+.story-editor-canvas {
   overflow-y: auto;
   flex: 1;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  padding: 24px 16px;
+  cursor: text;
+  min-height: 0;
 }
 
-.snippet-card {
+.story-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--text-dim);
+  font-size: 14px;
+  text-align: center;
+  cursor: text;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 32px;
+  transition: border-color 0.15s;
+}
+
+.story-empty:hover {
+  border-color: var(--text-dim);
+}
+
+/* Panel wrapper (draggable container) */
+.story-panel-wrapper {
+  display: flex;
+  gap: 4px;
+  align-items: stretch;
+  border-radius: 6px;
+  transition: opacity 0.15s, box-shadow 0.15s;
+}
+
+.story-panel-wrapper.dragging {
+  opacity: 0.4;
+}
+
+.story-panel-wrapper.drag-over {
+  box-shadow: 0 -2px 0 var(--accent);
+}
+
+.panel-drag-handle {
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  color: var(--text-dim);
+  cursor: grab;
+  font-size: 14px;
+  user-select: none;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.story-panel-wrapper:hover .panel-drag-handle {
+  opacity: 1;
+}
+
+.panel-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* Shared panel styles */
+.story-panel {
+  flex: 1;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
   background: var(--bg);
+  position: relative;
 }
 
-.snippet-card-header {
+.panel-remove {
+  all: unset;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.panel-remove:hover {
+  color: var(--red);
+}
+
+/* Narration panel */
+.narration-panel {
+  display: flex;
+  align-items: flex-start;
+}
+
+/* TipTap markdown editor */
+.markdown-editor {
+  flex: 1;
+  min-width: 0;
+}
+
+.markdown-editor .tiptap {
+  padding: 8px 10px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  outline: none;
+  min-height: 24px;
+}
+
+.markdown-editor .tiptap p {
+  margin: 0;
+}
+
+.markdown-editor .tiptap p + p {
+  margin-top: 0.5em;
+}
+
+.markdown-editor .tiptap h1,
+.markdown-editor .tiptap h2,
+.markdown-editor .tiptap h3 {
+  color: var(--text);
+  line-height: 1.3;
+  margin: 0.5em 0 0.25em;
+}
+
+.markdown-editor .tiptap h1 {
+  font-size: 1.5em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2em;
+}
+
+.markdown-editor .tiptap h2 {
+  font-size: 1.25em;
+}
+
+.markdown-editor .tiptap h3 {
+  font-size: 1.1em;
+}
+
+.markdown-editor .tiptap strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.markdown-editor .tiptap em {
+  color: var(--text);
+}
+
+.markdown-editor .tiptap code {
+  background: var(--bg-active);
+  border-radius: 3px;
+  padding: 0.15em 0.35em;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--accent);
+}
+
+.markdown-editor .tiptap pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 0.5em 0;
+  overflow-x: auto;
+}
+
+.markdown-editor .tiptap pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.markdown-editor .tiptap ul,
+.markdown-editor .tiptap ol {
+  padding-left: 1.5em;
+  margin: 0.25em 0;
+}
+
+.markdown-editor .tiptap li {
+  margin: 0.15em 0;
+}
+
+.markdown-editor .tiptap li p {
+  margin: 0;
+}
+
+.markdown-editor .tiptap blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 12px;
+  margin: 0.5em 0;
+  color: var(--text-muted);
+}
+
+.markdown-editor .tiptap hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.75em 0;
+}
+
+.markdown-editor .tiptap a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* Placeholder */
+.markdown-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-dim);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+/* Snippet panel */
+.snippet-panel-header {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -492,67 +724,295 @@ body {
   background: var(--bg-hover);
 }
 
-.snippet-type {
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-weight: 600;
+.panel-collapse {
+  all: unset;
+  cursor: pointer;
+  color: var(--text-dim);
   font-size: 10px;
-  text-transform: uppercase;
+  width: 16px;
+  text-align: center;
 }
 
-.snippet-type-hunk {
-  background: rgba(88, 166, 255, 0.2);
-  color: var(--accent);
+.panel-collapse:hover {
+  color: var(--text);
 }
 
-.snippet-type-lines {
-  background: rgba(210, 168, 255, 0.2);
-  color: #d2a8ff;
-}
-
-.snippet-type-text {
-  background: rgba(63, 185, 80, 0.2);
-  color: var(--green);
-}
-
-.snippet-file {
+.snippet-panel-file {
   color: var(--text);
   font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
 }
 
-.snippet-lines {
+.snippet-panel-lines {
   color: var(--text-dim);
   font-family: var(--font-mono);
   flex-shrink: 0;
 }
 
-.snippet-remove {
-  all: unset;
-  margin-left: auto;
-  cursor: pointer;
-  color: var(--text-dim);
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 2px;
+.snippet-panel-code {
+  padding: 4px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
-.snippet-remove:hover {
+.snippet-line {
+  display: flex;
+  padding: 0 8px;
+  white-space: pre;
+}
+
+.snippet-line-add {
+  background: var(--green-bg);
+}
+
+.snippet-line-del {
+  background: var(--red-bg);
+}
+
+.snippet-line-prefix {
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.snippet-line-add .snippet-line-prefix {
+  color: var(--green);
+}
+
+.snippet-line-del .snippet-line-prefix {
   color: var(--red);
 }
 
-.snippet-preview {
+.snippet-line-content {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Commentable lines — show hint on hover */
+.snippet-line-commentable {
+  position: relative;
+  cursor: pointer;
+}
+
+.snippet-line-comment-hint {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #d2a8ff;
+  color: #000;
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 0.1s;
+  pointer-events: none;
+}
+
+.snippet-line-commentable:hover .snippet-line-comment-hint {
+  opacity: 0.7;
+}
+
+.snippet-line-commentable:hover .snippet-line-comment-hint:hover {
+  opacity: 1;
+}
+
+/* Inline comment block between code lines */
+.snippet-inline-comment {
+  display: flex;
+  border-top: 1px solid rgba(210, 168, 255, 0.3);
+  border-bottom: 1px solid rgba(210, 168, 255, 0.3);
+  background: rgba(210, 168, 255, 0.06);
+}
+
+.snippet-inline-comment-bar {
+  width: 3px;
+  flex-shrink: 0;
+  background: #d2a8ff;
+}
+
+.snippet-inline-comment-body {
+  flex: 1;
+  min-width: 0;
   padding: 6px 8px;
+  position: relative;
+}
+
+.snippet-inline-comment-body .markdown-editor .tiptap {
+  padding: 4px 6px;
+  font-size: 13px;
+  min-height: 20px;
+}
+
+.snippet-inline-comment-remove {
+  all: unset;
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.snippet-inline-comment-remove:hover {
+  color: var(--red);
+}
+
+
+/* Gap zone — clickable area between panels to insert narration */
+.gap-zone {
+  height: 20px;
+  cursor: text;
+  position: relative;
+  transition: background 0.1s;
+  border-radius: 4px;
+}
+
+.gap-zone-first {
+  height: 8px;
+}
+
+.gap-zone:hover {
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.gap-zone:hover::after {
+  content: "";
+  position: absolute;
+  left: 20%;
+  right: 20%;
+  top: 50%;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.4;
+  border-radius: 1px;
+}
+
+/* Snippet during resize — no transitions, immediate margin shifts */
+.snippet-resizing {
+  transition: none !important;
+}
+
+/* Snippet resize handles */
+.snippet-resize-handle {
+  height: 6px;
+  cursor: ns-resize;
+  position: relative;
+  transition: background 0.1s;
+}
+
+.snippet-resize-top {
+  cursor: n-resize;
+  border-bottom: 1px solid transparent;
+}
+
+.snippet-resize-bottom {
+  cursor: s-resize;
+  border-top: 1px solid transparent;
+}
+
+.snippet-resize-handle:hover {
+  background: rgba(88, 166, 255, 0.15);
+}
+
+.snippet-resize-handle:hover::after {
+  content: "";
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  top: 50%;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.5;
+  border-radius: 1px;
+}
+
+/* @ autocomplete menu */
+.at-menu {
+  position: fixed;
+  z-index: 200;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  max-height: 240px;
+  overflow-y: auto;
+  min-width: 250px;
+  max-width: 400px;
+  padding: 4px;
+}
+
+.at-menu-item {
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.05s;
+}
+
+.at-menu-item.active {
+  background: var(--bg-active);
+}
+
+.at-menu-file {
   font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.4;
+  color: var(--text);
+}
+
+.at-menu-browse {
+  color: var(--accent);
+}
+
+/* Capture mode banner */
+.capture-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 16px;
+  background: rgba(88, 166, 255, 0.12);
+  border-bottom: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.capture-banner button {
+  all: unset;
+  cursor: pointer;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 12px;
   color: var(--text-muted);
-  white-space: pre;
-  overflow: hidden;
-  max-height: 80px;
-  text-overflow: ellipsis;
+  border: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.capture-banner button:hover {
+  background: var(--bg-hover);
+}
+
+/* Kbd styling */
+kbd {
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 /* Loading */

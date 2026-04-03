@@ -95,3 +95,71 @@ export function useCommitDiff(hash: string | null) {
 
   return { diff, loading };
 }
+
+export interface FileLinesResult {
+  lines: string[];
+  total: number;
+  start: number;
+  end: number;
+}
+
+export async function fetchFileLines(
+  ref: string,
+  path: string,
+  start: number,
+  end: number
+): Promise<FileLinesResult> {
+  return fetchJson<FileLinesResult>(
+    `/api/lines/${ref}/${path}?start=${start}&end=${end}`
+  );
+}
+
+/** A diff line with its prefix and new-side line number */
+export interface DiffLineEntry {
+  prefix: "+" | "-" | " ";
+  content: string;
+  newLineNum: number | null; // null for deletions
+}
+
+const diffLineCache = new Map<string, DiffLineEntry[]>();
+
+/**
+ * Fetch and parse a file's diff into an ordered list of diff lines.
+ * Cached so multiple calls for the same file are free.
+ */
+export async function fetchParsedDiffLines(
+  path: string
+): Promise<DiffLineEntry[]> {
+  const cached = diffLineCache.get(path);
+  if (cached) return cached;
+
+  const raw = await fetchText(`/api/diff/${path}`);
+  const entries: DiffLineEntry[] = [];
+  let newLine = 0;
+
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("@@")) {
+      const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (match) newLine = parseInt(match[1]);
+      continue;
+    }
+    if (
+      line.startsWith("diff ") || line.startsWith("index ") ||
+      line.startsWith("---") || line.startsWith("+++") ||
+      line.startsWith("new file") || line.startsWith("deleted file") ||
+      line.startsWith("similarity") || line.startsWith("rename") ||
+      line.startsWith("Binary")
+    ) continue;
+
+    if (line.startsWith("+")) {
+      entries.push({ prefix: "+", content: line.slice(1), newLineNum: newLine++ });
+    } else if (line.startsWith("-")) {
+      entries.push({ prefix: "-", content: line.slice(1), newLineNum: null });
+    } else if (line.startsWith(" ") || line === "") {
+      entries.push({ prefix: " ", content: line.startsWith(" ") ? line.slice(1) : "", newLineNum: newLine++ });
+    }
+  }
+
+  diffLineCache.set(path, entries);
+  return entries;
+}

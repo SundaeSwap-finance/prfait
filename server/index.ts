@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import { join } from "path";
 import {
   getChangedFiles,
   getCommitDiff,
@@ -7,6 +9,8 @@ import {
   getCurrentBranch,
   getFileContent,
   getFileDiff,
+  getFileLineCount,
+  getFileLines,
   getFullDiff,
 } from "./git";
 
@@ -51,6 +55,21 @@ app.get("/api/content/:ref/:path{.+}", async (c) => {
   }
 });
 
+// Lines from a file at a ref
+app.get("/api/lines/:ref/:path{.+}", async (c) => {
+  const ref = c.req.param("ref");
+  const path = c.req.param("path");
+  const start = parseInt(c.req.query("start") ?? "1");
+  const end = parseInt(c.req.query("end") ?? "50");
+  try {
+    const lines = await getFileLines(REPO_DIR, ref, path, start, end);
+    const total = await getFileLineCount(REPO_DIR, ref, path);
+    return c.json({ lines, total, start, end });
+  } catch {
+    return c.json({ error: "File not found at ref" }, 404);
+  }
+});
+
 app.get("/api/commits", async (c) => {
   const commits = await getCommits(REPO_DIR, BASE_BRANCH);
   return c.json(commits);
@@ -60,6 +79,35 @@ app.get("/api/commits/:hash/diff", async (c) => {
   const hash = c.req.param("hash");
   const diff = await getCommitDiff(REPO_DIR, hash);
   return c.text(diff);
+});
+
+// --- Story persistence ---
+
+const STORY_DIR = join(REPO_DIR, ".prfait");
+
+async function storyPath(): Promise<string> {
+  const branch = await getCurrentBranch(REPO_DIR);
+  // Sanitize branch name for filename
+  const safe = branch.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return join(STORY_DIR, `${safe}.json`);
+}
+
+app.get("/api/story", async (c) => {
+  try {
+    const path = await storyPath();
+    const data = await readFile(path, "utf-8");
+    return c.json(JSON.parse(data));
+  } catch {
+    return c.json(null);
+  }
+});
+
+app.post("/api/story", async (c) => {
+  const body = await c.req.json();
+  const path = await storyPath();
+  await mkdir(STORY_DIR, { recursive: true });
+  await writeFile(path, JSON.stringify(body, null, 2));
+  return c.json({ ok: true });
 });
 
 // In production, serve the built frontend
