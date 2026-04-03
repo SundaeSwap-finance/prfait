@@ -1,4 +1,7 @@
-/target
+node_modules/
+dist/
+.prfait/
+*.tsbuildinfo
 *.swp
 *.swo
 *~
